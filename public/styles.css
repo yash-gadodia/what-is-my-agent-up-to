@@ -1,10 +1,10 @@
 :root {
   color-scheme: dark;
-  --bg: #070d1c;
-  --panel: rgba(10, 20, 40, 0.72);
-  --text: #dcf2ff;
-  --muted: #9fbbd5;
-  --line: rgba(124, 178, 255, 0.38);
+  --bg: #1c2b3e;
+  --panel: rgba(24, 37, 52, 0.88);
+  --text: #f5f1e2;
+  --muted: #cfd7c4;
+  --line: rgba(243, 222, 173, 0.5);
 }
 
 * {
@@ -17,11 +17,10 @@ body {
   width: 100%;
   height: 100%;
   background:
-    radial-gradient(circle at 18% 15%, rgba(68, 121, 221, 0.32) 0%, rgba(8, 15, 30, 0) 45%),
-    radial-gradient(circle at 83% 80%, rgba(48, 191, 170, 0.24) 0%, rgba(8, 15, 30, 0) 50%),
-    linear-gradient(160deg, #070d1c 0%, #0a1630 100%);
+    radial-gradient(circle at 14% 12%, rgba(96, 138, 190, 0.3) 0%, rgba(96, 138, 190, 0) 40%),
+    linear-gradient(180deg, #2b3e53 0%, #1d2938 100%);
   color: var(--text);
-  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-family: "Courier New", Courier, monospace;
 }
 
 .app-shell {
@@ -38,45 +37,48 @@ body {
   height: auto;
   max-height: calc(100vh - 24px);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #081128;
+  border-radius: 6px;
+  background: #1f3246;
+  image-rendering: pixelated;
   box-shadow:
-    0 12px 40px rgba(7, 12, 26, 0.65),
-    0 0 0 1px rgba(130, 184, 255, 0.16) inset;
+    0 14px 32px rgba(6, 10, 16, 0.5),
+    0 0 0 1px rgba(245, 228, 183, 0.14) inset;
 }
 
 .hud {
   position: fixed;
-  top: 16px;
-  left: 16px;
-  width: min(420px, calc(100vw - 32px));
-  padding: 10px 12px;
-  border: 1px solid var(--line);
+  top: 18px;
+  left: 18px;
+  width: min(560px, calc(100vw - 36px));
+  padding: 14px 16px;
+  border: 2px solid var(--line);
   background: var(--panel);
-  border-radius: 10px;
-  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  backdrop-filter: blur(2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.28);
 }
 
 .hud h1 {
-  margin: 0 0 8px;
-  font-size: 13px;
+  margin: 0 0 10px;
+  font-size: 17px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .hud p {
-  margin: 4px 0;
+  margin: 6px 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1.35;
 }
 
 #logLines {
-  margin: 8px 0 0;
-  min-height: 96px;
-  max-height: 180px;
+  margin: 12px 0 0;
+  min-height: 150px;
+  max-height: 280px;
   overflow: auto;
-  font-size: 11px;
-  line-height: 1.3;
+  font-size: 13px;
+  line-height: 1.45;
   white-space: pre-wrap;
   color: var(--text);
 }

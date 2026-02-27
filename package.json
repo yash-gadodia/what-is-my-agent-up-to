@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node server.mjs",
     "relay": "node relay.mjs",
+    "helper": "node helper.mjs",
     "start": "npm run dev",
     "lint": "echo \"No lint configured for MVP\""
   },

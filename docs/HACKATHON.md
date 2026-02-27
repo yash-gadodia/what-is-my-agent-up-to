@@ -1,37 +1,49 @@
 # Hackathon Brief
 
-## Problem Statement
+## Problem
 
-Agentic coding tools are powerful but hard to observe in real time. Teams struggle to see where the agent is working, what changed, and whether a run is healthy without reading dense logs.
+Agent coding sessions are hard to observe live. Teams see long logs but cannot quickly answer:
 
-## Solution In 1 Sentence
+- what the agent is doing now
+- where effort is going
+- whether it is stuck in loops
 
-Stream Codex CLI JSON events into a live pixel city that makes progress, failures, and code touchpoints visible in seconds.
+## Solution
 
-## Demo Script (2 Minutes)
+Codex Agent Viz SG converts streaming Codex JSON events into a Singapore-themed pixel city with run lanes, timeline inspection, and stuck detection.
 
-1. Show two terminals and browser side by side.
-2. Start frontend server: `npm run dev`.
-3. Start relay against OpenClaw with a concrete coding prompt.
-4. Explain city layout: Frontend, Backend, Infra, Tests, plus HQ.
-5. Trigger run and narrate live updates:
-- vehicle movement when tools or turns start
-- building growth when files are touched
-- red beacon on failures
-- green pulse on completion events
-6. Close with why this helps teams trust and steer autonomous coding.
+## Why It Matters
 
-## Why Judges Should Care
+- Improves trust in agent runs by showing behavior instead of only logs
+- Helps teams intervene earlier when loops or repeated failures appear
+- Makes demos legible for technical and non-technical judges
 
-- Improves observability for agentic coding workflows.
-- Increases trust through transparent, real time activity mapping.
-- Lightweight architecture that teams can adopt in under one hour.
-- Clear path to replay, analytics, and team operations features.
+## Evaluation Angle
 
-## Stretch Goals
+The dashboard reports measurable run signals:
 
-- Session recording and replay timeline.
-- Side panel with semantic event filters.
-- Multi agent lanes and branch comparison mode.
-- CI integration for post run visualization links.
-- Heatmap mode for long running sessions.
+- duration
+- tool activity count
+- file changed count
+- error count
+- success count
+- stuck score from loop heuristics
+
+This gives a lightweight eval lens without requiring runtime-specific integrations.
+
+## Two Minute Demo Flow
+
+1. Start `npm run dev` and open `http://localhost:8788`.
+2. Start relay against a repo with `node relay.mjs --repo <path> --prompt "..."`.
+3. Show run lanes and live websocket status.
+4. Trigger activity and point at district mapping and animations.
+5. Open a timeline item and inspect raw plus derived meaning.
+6. Show stuck score and suggested intervention copy.
+7. Use replay slider and `2x` speed.
+8. Trigger simulator pack for `scolded`, `longtask`, `asleep`.
+
+## Scope Guardrails
+
+- No OpenClaw runtime process integration in this build
+- Input source is Codex JSON events from `ws://localhost:8787`
+- Mapping is resilient to unknown event types

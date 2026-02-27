@@ -1,672 +1,969 @@
-const canvas = document.getElementById("cityCanvas");
-const ctx = canvas.getContext("2d");
+import {
+  mapCodexToVizEvents,
+  extractRunIdentity,
+  getRawEventTimestamp,
+  getRawEventType,
+} from "./mapping.js";
 
-const wsStatusEl = document.getElementById("wsStatus");
-const metricsEl = document.getElementById("metrics");
-const lastTypeEl = document.getElementById("lastType");
-const logLinesEl = document.getElementById("logLines");
+const WS_URL = "ws://localhost:8787";
+const DIFF_HELPER_URL = "http://localhost:8790";
+const STORAGE_KEY = "agent-viz-runs-v2";
+const SETTINGS_KEY = "agent-viz-settings-v1";
 
 const WORLD = {
   width: 1280,
   height: 720,
   tile: 16,
-  cols: 80,
-  rows: 45,
 };
 
 const DISTRICTS = {
-  Frontend: { x1: 0, y1: 0, x2: 39, y2: 21 },
-  Backend: { x1: 40, y1: 0, x2: 79, y2: 21 },
-  Infra: { x1: 0, y1: 22, x2: 39, y2: 44 },
-  Tests: { x1: 40, y1: 22, x2: 79, y2: 44 },
+  CBD: { x: 8, y: 8, w: 20, h: 12, color: "#5c88d5", glow: "#9ac1ff" },
+  Bugis: { x: 32, y: 8, w: 18, h: 12, color: "#59b885", glow: "#9de6c0" },
+  Jurong: { x: 8, y: 24, w: 20, h: 13, color: "#d88b4f", glow: "#ffbe8a" },
+  Changi: { x: 52, y: 24, w: 20, h: 13, color: "#6ea4c5", glow: "#ace0f7" },
 };
 
-const HQ = { x: 40, y: 22 };
+const HQ = { x: 40, y: 21 };
+const MARINA = { x: 34, y: 22, w: 13, h: 8 };
 
-const Direction = {
-  DOWN: 0,
-  LEFT: 1,
-  RIGHT: 2,
-  UP: 3,
+const DISTRICT_TOOL_HINTS = {
+  Changi: /(test|tests|__tests__|pytest|jest|vitest|assert)/,
+  Jurong: /(infra|docker|k8s|terraform|helm|deploy|pipeline|ci|cd|config)/,
+  Bugis: /(ui|frontend|component|css|html|view|react|vue|svelte)/,
+  CBD: /.*/,
 };
 
-const CharacterState = {
-  IDLE: "idle",
-  WALK: "walk",
-  TYPE: "type",
+const AUNTIE_LINES = [
+  "Aiya, same error again.",
+  "Show logs first lah.",
+  "Scope too big, break down can?",
+];
+const UNCLE_LINES = ["Check env and configs."];
+const MRT_LINES = ["Train running, agent busy."];
+
+const NPCS = {
+  auntie: { x: 4, y: 30, color: "#f2be8f", label: "Auntie Debug" },
+  uncle: { x: 18, y: 38, color: "#9ed9ff", label: "Uncle Ops" },
+  mrt: { x: 49, y: 16, color: "#ffd87f", label: "MRT Controller" },
 };
 
-const WALK_SPEED_PX_PER_SEC = 48;
-const WALK_FRAME_DURATION_SEC = 0.15;
-const TYPE_FRAME_DURATION_SEC = 0.3;
-const CHARACTER_SITTING_OFFSET_PX = 6;
-const CHARACTER_RENDER_SCALE = 2;
-const READING_TOOLS = new Set(["Read", "Grep", "Glob", "WebFetch", "WebSearch"]);
+const canvas = document.getElementById("cityCanvas");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
 
-const DISTRICT_COLORS = {
-  Frontend: "#63d1c6",
-  Backend: "#6fa8ff",
-  Infra: "#5eb5ff",
-  Tests: "#82df9b",
-};
+const wsStatusEl = document.getElementById("wsStatus");
+const repoPathInputEl = document.getElementById("repoPathInput");
+const useGitDiffToggleEl = document.getElementById("useGitDiffToggle");
+const setRepoBtnEl = document.getElementById("setRepoBtn");
+const reconnectBtnEl = document.getElementById("reconnectBtn");
+const helperStatusEl = document.getElementById("helperStatus");
+const newRunBtnEl = document.getElementById("newRunBtn");
+const simPackBtnEl = document.getElementById("simPackBtn");
+const simScoldedBtnEl = document.getElementById("simScoldedBtn");
+const simLongtaskBtnEl = document.getElementById("simLongtaskBtn");
+const simAsleepBtnEl = document.getElementById("simAsleepBtn");
+const runListEl = document.getElementById("runList");
+const stuckBannerEl = document.getElementById("stuckBanner");
+const runBadgeEl = document.getElementById("runBadge");
+const playPauseBtnEl = document.getElementById("playPauseBtn");
+const liveViewBtnEl = document.getElementById("liveViewBtn");
+const replaySpeedEl = document.getElementById("replaySpeed");
+const exportRunBtnEl = document.getElementById("exportRunBtn");
+const importRunInputEl = document.getElementById("importRunInput");
+const replaySliderEl = document.getElementById("replaySlider");
+const replayInfoEl = document.getElementById("replayInfo");
+const timelineListEl = document.getElementById("timelineList");
+const metricDurationEl = document.getElementById("metricDuration");
+const metricToolCountEl = document.getElementById("metricToolCount");
+const metricFileCountEl = document.getElementById("metricFileCount");
+const metricErrorCountEl = document.getElementById("metricErrorCount");
+const metricSuccessCountEl = document.getElementById("metricSuccessCount");
+const metricStuckEl = document.getElementById("metricStuck");
+const interventionTextEl = document.getElementById("interventionText");
+const inspectorSummaryEl = document.getElementById("inspectorSummary");
+const inspectorRawEl = document.getElementById("inspectorRaw");
 
-const DISTRICT_PIXEL = {
-  Frontend: {
-    outsideA: "#3d6d56",
-    outsideB: "#477e61",
-    floorA: "#859f8f",
-    floorB: "#93ac9d",
-    accent: "#63d1c6",
-  },
-  Backend: {
-    outsideA: "#3f5f86",
-    outsideB: "#4a6d96",
-    floorA: "#8b9eb6",
-    floorB: "#99abc1",
-    accent: "#7ab6ff",
-  },
-  Infra: {
-    outsideA: "#51637a",
-    outsideB: "#5c7188",
-    floorA: "#93a0af",
-    floorB: "#9facba",
-    accent: "#8bc3ff",
-  },
-  Tests: {
-    outsideA: "#5b7c4b",
-    outsideB: "#688a57",
-    floorA: "#9bb28f",
-    floorB: "#a8be9c",
-    accent: "#98e58b",
-  },
-};
-
-const FILE_REGEX = /([\w./-]+\.(?:ts|tsx|js|jsx|py|md|json|yml|yaml|go|rs|java|c|cpp|h))/gi;
+const staticLayer = buildStaticLayer();
 
 const state = {
-  buildings: new Map(),
-  agents: new Map(),
-  vehicles: [],
-  effects: [],
-  lastEvents: [],
-  wsState: "connecting",
-  lastEventType: "none",
+  runs: new Map(),
+  runOrder: [],
+  selectedRunId: null,
+  activeManualRunId: null,
+  manualRunCounter: 0,
+  timelineSelectionByRun: new Map(),
+  timelineEventId: 1,
+  ws: {
+    socket: null,
+    status: "connecting",
+    attempts: 0,
+    reconnectTimer: null,
+    manualReconnect: false,
+  },
+  git: {
+    repoPath: "",
+    useGitDiff: false,
+    lastPollAt: 0,
+    lastFingerprint: "",
+  },
+  replay: {
+    active: false,
+    playing: false,
+    sourceRunId: null,
+    previewRun: null,
+    index: 0,
+    speed: 1,
+    timer: null,
+  },
+  simulatorTimers: [],
+  persistTimer: null,
 };
 
-const _ = "";
+function nowMs() {
+  return Date.now();
+}
 
-const DESK_SQUARE_SPRITE = (() => {
-  const W = "#8B6914";
-  const L = "#A07828";
-  const S = "#B8922E";
-  const D = "#6B4E0A";
-  const rows = [];
-  rows.push(new Array(32).fill(_));
-  rows.push([_, ...new Array(30).fill(W), _]);
-  for (let r = 0; r < 4; r += 1) {
-    rows.push([_, W, ...new Array(28).fill(r < 1 ? L : S), W, _]);
-  }
-  rows.push([_, D, ...new Array(28).fill(W), D, _]);
-  for (let r = 0; r < 6; r += 1) {
-    rows.push([_, W, ...new Array(28).fill(S), W, _]);
-  }
-  rows.push([_, W, ...new Array(28).fill(L), W, _]);
-  for (let r = 0; r < 6; r += 1) {
-    rows.push([_, W, ...new Array(28).fill(S), W, _]);
-  }
-  rows.push([_, D, ...new Array(28).fill(W), D, _]);
-  for (let r = 0; r < 4; r += 1) {
-    rows.push([_, W, ...new Array(28).fill(r > 2 ? L : S), W, _]);
-  }
-  rows.push([_, ...new Array(30).fill(W), _]);
-  for (let r = 0; r < 4; r += 1) {
-    const row = new Array(32).fill(_);
-    row[1] = D;
-    row[2] = D;
-    row[29] = D;
-    row[30] = D;
-    rows.push(row);
-  }
-  rows.push(new Array(32).fill(_));
-  rows.push(new Array(32).fill(_));
-  return rows;
-})();
-
-const CHAIR_SPRITE = (() => {
-  const W = "#8B6914";
-  const D = "#6B4E0A";
-  const B = "#5C3D0A";
-  const S = "#A07828";
-  return [
-    [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-    [_, _, _, _, D, B, B, B, B, B, B, D, _, _, _, _],
-    [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-    [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-    [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-    [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-    [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-    [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-    [_, _, _, _, D, B, S, S, S, S, B, D, _, _, _, _],
-    [_, _, _, _, D, B, B, B, B, B, B, D, _, _, _, _],
-    [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-    [_, _, _, _, _, _, D, W, W, D, _, _, _, _, _, _],
-    [_, _, _, _, _, _, D, W, W, D, _, _, _, _, _, _],
-    [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-    [_, _, _, _, _, D, _, _, _, _, D, _, _, _, _, _],
-    [_, _, _, _, _, D, _, _, _, _, D, _, _, _, _, _],
-  ];
-})();
-
-const PC_SPRITE = (() => {
-  const F = "#555555";
-  const S = "#3A3A5C";
-  const B = "#6688CC";
-  const D = "#444444";
-  return [
-    [_, _, _, F, F, F, F, F, F, F, F, F, F, _, _, _],
-    [_, _, _, F, S, S, S, S, S, S, S, S, F, _, _, _],
-    [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-    [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-    [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-    [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-    [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-    [_, _, _, F, S, B, B, B, B, B, B, S, F, _, _, _],
-    [_, _, _, F, S, S, S, S, S, S, S, S, F, _, _, _],
-    [_, _, _, F, F, F, F, F, F, F, F, F, F, _, _, _],
-    [_, _, _, _, _, _, _, D, D, _, _, _, _, _, _, _],
-    [_, _, _, _, _, _, _, D, D, _, _, _, _, _, _, _],
-    [_, _, _, _, _, _, D, D, D, D, _, _, _, _, _, _],
-    [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-    [_, _, _, _, _, D, D, D, D, D, D, _, _, _, _, _],
-    [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
-  ];
-})();
-
-const PLANT_SPRITE = (() => {
-  const G = "#3D8B37";
-  const D = "#2D6B27";
-  const T = "#6B4E0A";
-  const P = "#B85C3A";
-  const R = "#8B4422";
-  return [
-    [_, _, _, _, _, _, G, G, _, _, _, _, _, _, _, _],
-    [_, _, _, _, _, G, G, G, G, _, _, _, _, _, _, _],
-    [_, _, _, _, G, G, D, G, G, G, _, _, _, _, _, _],
-    [_, _, _, G, G, D, G, G, D, G, G, _, _, _, _, _],
-    [_, _, G, G, G, G, G, G, G, G, G, G, _, _, _, _],
-    [_, G, G, D, G, G, G, G, G, G, D, G, G, _, _, _],
-    [_, G, G, G, G, D, G, G, D, G, G, G, G, _, _, _],
-    [_, _, G, G, G, G, G, G, G, G, G, G, _, _, _, _],
-    [_, _, _, G, G, G, D, G, G, G, G, _, _, _, _, _],
-    [_, _, _, _, G, G, G, G, G, G, _, _, _, _, _, _],
-    [_, _, _, _, _, G, G, G, G, _, _, _, _, _, _, _],
-    [_, _, _, _, _, _, T, T, _, _, _, _, _, _, _, _],
-    [_, _, _, _, _, _, T, T, _, _, _, _, _, _, _, _],
-    [_, _, _, _, _, _, T, T, _, _, _, _, _, _, _, _],
-    [_, _, _, _, _, R, R, R, R, R, _, _, _, _, _, _],
-    [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-    [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-    [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-    [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-    [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-    [_, _, _, _, R, P, P, P, P, P, R, _, _, _, _, _],
-    [_, _, _, _, _, R, P, P, P, R, _, _, _, _, _, _],
-    [_, _, _, _, _, _, R, R, R, _, _, _, _, _, _, _],
-    [_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _],
-  ];
-})();
-
-const BUBBLE_PERMISSION_SPRITE = (() => {
-  const B = "#555566";
-  const F = "#EEEEFF";
-  const A = "#CCA700";
-  return [
-    [B, B, B, B, B, B, B, B, B, B, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, A, F, A, F, A, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, B, B, B, B, B, B, B, B, B, B],
-    [_, _, _, _, B, B, B, _, _, _, _],
-    [_, _, _, _, _, B, _, _, _, _, _],
-    [_, _, _, _, _, _, _, _, _, _, _],
-  ];
-})();
-
-const BUBBLE_WAITING_SPRITE = (() => {
-  const B = "#555566";
-  const F = "#EEEEFF";
-  const G = "#44BB66";
-  return [
-    [_, B, B, B, B, B, B, B, B, B, _],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, G, F, B],
-    [B, F, F, F, F, F, F, G, F, F, B],
-    [B, F, F, G, F, F, G, F, F, F, B],
-    [B, F, F, F, G, G, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [B, F, F, F, F, F, F, F, F, F, B],
-    [_, B, B, B, B, B, B, B, B, B, _],
-    [_, _, _, _, B, B, B, _, _, _, _],
-    [_, _, _, _, _, B, _, _, _, _, _],
-    [_, _, _, _, _, _, _, _, _, _, _],
-  ];
-})();
-
-const CHARACTER_ATLASES = Array.from({ length: 6 }, (_, i) => {
-  const img = new Image();
-  img.src = `/assets/characters/char_${i}.png`;
-  return img;
-});
-
-const OFFICE = createOfficeLayout();
-const DISTRICT_SEATS = OFFICE.seats;
-const BLOCKED_TILES = OFFICE.blockedTiles;
-const TILE_KIND = OFFICE.tileKind;
-const TILE_DISTRICT = OFFICE.tileDistrict;
-const DECOR_ITEMS = OFFICE.decor;
-
-const TILE_MAP = Array.from({ length: WORLD.rows }, () =>
-  Array.from({ length: WORLD.cols }, () => 1)
-);
-
-const spriteCache = new WeakMap();
-const STATIC_LAYER = buildStaticLayer();
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
 
 function hashString(input) {
   let h = 2166136261;
-  for (let i = 0; i < input.length; i += 1) {
-    h ^= input.charCodeAt(i);
+  const text = String(input || "");
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
   return h >>> 0;
 }
 
-function districtCenter(name) {
-  const d = DISTRICTS[name];
+function statusClass(status) {
+  if (status === "working") return "status-working";
+  if (status === "error") return "status-error";
+  if (status === "done") return "status-done";
+  return "status-idle";
+}
+
+function sanitizeRunIdentity(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9:_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-:]+|[-:]+$/g, "")
+    .slice(0, 80);
+}
+
+function districtFromPath(filePath) {
+  const value = String(filePath || "").toLowerCase();
+  if (/(^|\/)(tests|test|__tests__)(\/|$)/.test(value)) return "Changi";
+  if (/(infra|docker|k8s|terraform|helm|ansible)/.test(value)) return "Jurong";
+  if (/(ui|frontend|component|components|styles|css|web)/.test(value)) return "Bugis";
+  return "CBD";
+}
+
+function districtFromText(text) {
+  const lower = String(text || "").toLowerCase();
+  for (const [district, pattern] of Object.entries(DISTRICT_TOOL_HINTS)) {
+    if (pattern.test(lower)) return district;
+  }
+  return "CBD";
+}
+
+function tileToPx(col, row) {
   return {
-    x: Math.floor((d.x1 + d.x2) / 2),
-    y: Math.floor((d.y1 + d.y2) / 2),
+    x: col * WORLD.tile,
+    y: row * WORLD.tile,
   };
 }
 
-function chooseDistrictFromPath(filePath) {
-  const p = filePath.toLowerCase();
-  if (/(^|\/)(test|tests|__tests__)(\/|$)/.test(p)) return "Tests";
-  if (/(infra|docker|k8s|terraform)/.test(p)) return "Infra";
-  if (/(ui|frontend|components)/.test(p)) return "Frontend";
-  return "Backend";
+function districtCenterPx(name) {
+  const d = DISTRICTS[name] || DISTRICTS.CBD;
+  return {
+    x: (d.x + d.w / 2) * WORLD.tile,
+    y: (d.y + d.h / 2) * WORLD.tile,
+  };
 }
 
-function chooseDistrictFromEvent(evt, fallback = "Backend") {
-  const blob = JSON.stringify(evt).toLowerCase();
-  if (/(test|__tests__|jest|vitest|pytest)/.test(blob)) return "Tests";
-  if (/(infra|docker|k8s|terraform|deploy|ci)/.test(blob)) return "Infra";
-  if (/(ui|frontend|component|css|dom|react|vue)/.test(blob)) return "Frontend";
-  if (/(api|server|backend|db|sql)/.test(blob)) return "Backend";
-  return fallback;
+function formatTime(ts) {
+  const date = new Date(ts);
+  return date.toLocaleTimeString();
 }
 
-function typeOfEvent(evt) {
-  const candidates = [
-    evt?.type,
-    evt?.event,
-    evt?.name,
-    evt?.kind,
-    evt?.status,
-    evt?.level,
-  ];
-  for (const item of candidates) {
-    if (typeof item === "string" && item.trim()) return item;
-  }
-  return "unknown";
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return "0s";
+  const sec = Math.floor(ms / 1000);
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  if (min > 0) return `${min}m ${rem}s`;
+  return `${sec}s`;
 }
 
-function extractFilePaths(evt) {
-  const found = new Set();
-
-  const directCandidates = [
-    evt?.path,
-    evt?.file,
-    evt?.filePath,
-    evt?.filepath,
-    evt?.target,
-    evt?.payload?.path,
-    evt?.payload?.file,
-    evt?.data?.path,
-  ];
-
-  for (const value of directCandidates) {
-    if (typeof value === "string" && /\.[a-zA-Z0-9]+$/.test(value)) {
-      found.add(value);
-    }
-  }
-
-  const listCandidates = [evt?.paths, evt?.files, evt?.payload?.paths, evt?.payload?.files];
-  for (const list of listCandidates) {
-    if (!Array.isArray(list)) continue;
-    for (const value of list) {
-      if (typeof value === "string" && /\.[a-zA-Z0-9]+$/.test(value)) {
-        found.add(value);
-      }
-    }
-  }
-
-  const text = JSON.stringify(evt);
-  let match;
-  while ((match = FILE_REGEX.exec(text)) !== null) {
-    found.add(match[1]);
-  }
-
-  return Array.from(found);
-}
-
-function extractToolName(evt) {
-  const candidates = [
-    evt?.tool,
-    evt?.tool_name,
-    evt?.toolName,
-    evt?.name,
-    evt?.call?.name,
-    evt?.payload?.tool,
-  ];
-
-  for (const c of candidates) {
-    if (typeof c === "string" && c.trim()) return c.trim();
-  }
-
-  const blob = JSON.stringify(evt);
-  if (/\b(Read|Grep|Glob|WebFetch|WebSearch)\b/.test(blob)) return "Read";
-  if (/\b(Write|Edit|MultiEdit|Replace|Patch)\b/.test(blob)) return "Write";
-  if (/\b(Bash|Shell|Terminal|Command)\b/.test(blob)) return "Bash";
-  return null;
-}
-
-function buildingLevel(touches) {
+function levelFromTouches(touches) {
   if (touches >= 5) return 3;
   if (touches >= 2) return 2;
   return 1;
 }
 
-function addLogLine(line) {
-  state.lastEvents.unshift(line);
-  if (state.lastEvents.length > 8) state.lastEvents.length = 8;
+function hexToRgba(hex, alpha = 1) {
+  const clean = String(hex || "").trim().replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) {
+    return `rgba(255, 255, 255, ${alpha})`;
+  }
+
+  const r = Number.parseInt(clean.slice(0, 2), 16);
+  const g = Number.parseInt(clean.slice(2, 4), 16);
+  const b = Number.parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function isToolCallEvent(evt, eventType) {
-  const raw = `${eventType} ${JSON.stringify(evt)}`.toLowerCase();
-  return /(tool_call|tool.call|turn.started|turn_start|assistant.turn.started|step.started)/.test(raw);
+function makeDistrictSlots() {
+  const all = {};
+  for (const [district, bounds] of Object.entries(DISTRICTS)) {
+    const slots = [];
+    let i = 0;
+    for (let y = bounds.y + 2; y <= bounds.y + bounds.h - 3; y += 3) {
+      for (let x = bounds.x + 2; x <= bounds.x + bounds.w - 4; x += 4) {
+        slots.push({ district, index: i, col: x, row: y });
+        i += 1;
+      }
+    }
+    all[district] = slots;
+  }
+  return all;
 }
 
-function isErrorEvent(evt, eventType) {
-  const raw = `${eventType} ${JSON.stringify(evt)}`.toLowerCase();
-  return /(error|failed|exception|fatal|timeout)/.test(raw);
-}
+const DISTRICT_SLOTS = makeDistrictSlots();
 
-function isSuccessEvent(evt, eventType) {
-  const raw = `${eventType} ${JSON.stringify(evt)}`.toLowerCase();
-  return /(completed|passed|succeeded|success|done|exit"?:0)/.test(raw);
-}
-
-function tileCenter(col, row) {
+function createEmptyNpcState() {
   return {
-    x: col * WORLD.tile + WORLD.tile / 2,
-    y: row * WORLD.tile + WORLD.tile / 2,
+    auntie: { text: "", until: 0, nextIndex: 0 },
+    uncle: { text: "", until: 0, nextIndex: 0 },
+    mrt: { text: "", until: 0, nextIndex: 0 },
   };
 }
 
-function directionBetween(fromCol, fromRow, toCol, toRow) {
-  const dc = toCol - fromCol;
-  const dr = toRow - fromRow;
-  if (dc > 0) return Direction.RIGHT;
-  if (dc < 0) return Direction.LEFT;
-  if (dr > 0) return Direction.DOWN;
-  return Direction.UP;
+function createRun({ runId, agentId, label, manual = false, simulated = false }) {
+  return {
+    runId,
+    agentId,
+    label,
+    manual,
+    simulated,
+    status: "idle",
+    createdAt: nowMs(),
+    firstTs: null,
+    lastTs: null,
+    rawEvents: [],
+    timeline: [],
+    toolCount: 0,
+    fileCount: 0,
+    errorCount: 0,
+    successCount: 0,
+    noteCount: 0,
+    fileStats: new Map(),
+    slotStats: {
+      CBD: new Map(),
+      Bugis: new Map(),
+      Jurong: new Map(),
+      Changi: new Map(),
+    },
+    districtTouches: {
+      CBD: 0,
+      Bugis: 0,
+      Jurong: 0,
+      Changi: 0,
+    },
+    vehicles: [],
+    effects: [],
+    toolTimes: [],
+    fileTimes: [],
+    errorSignatures: [],
+    failureStreak: 0,
+    lastToolAt: 0,
+    lastFileChangeAt: 0,
+    stuckScore: 0,
+    stuckReason: "",
+    intervention: "No intervention needed yet.",
+    npcs: createEmptyNpcState(),
+    lastBubbleAt: {
+      auntie: 0,
+      uncle: 0,
+      mrt: 0,
+    },
+    highlight: null,
+  };
 }
 
-function isWalkable(col, row, blockedTiles) {
-  if (row < 0 || row >= WORLD.rows || col < 0 || col >= WORLD.cols) return false;
-  if (TILE_MAP[row][col] === 0) return false;
-  return !blockedTiles.has(`${col},${row}`);
+function getRunLabelFromIdentity(identity) {
+  if (!identity) return "codex:main";
+  return `codex:${identity}`;
 }
 
-function findPath(startCol, startRow, endCol, endRow, blockedTiles) {
-  if (startCol === endCol && startRow === endRow) return [];
+function ensureRun(runId, { agentId, label, manual = false, simulated = false } = {}) {
+  if (state.runs.has(runId)) return state.runs.get(runId);
 
-  const key = (c, r) => `${c},${r}`;
-  const startKey = key(startCol, startRow);
-  const endKey = key(endCol, endRow);
+  const run = createRun({
+    runId,
+    agentId: agentId || `codex:${runId}`,
+    label: label || agentId || `codex:${runId}`,
+    manual,
+    simulated,
+  });
 
-  if (!isWalkable(endCol, endRow, blockedTiles)) return [];
+  state.runs.set(runId, run);
+  state.runOrder.unshift(runId);
+  if (!state.selectedRunId) state.selectedRunId = runId;
+  return run;
+}
 
-  const visited = new Set();
-  const parent = new Map();
-  const queue = [{ col: startCol, row: startRow }];
+function ensureMainRun() {
+  const run = ensureRun("main", {
+    agentId: "codex:main",
+    label: "codex:main",
+  });
 
-  visited.add(startKey);
+  if (!state.activeManualRunId) {
+    state.activeManualRunId = run.runId;
+  }
+}
 
-  const dirs = [
-    { dc: 0, dr: -1 },
-    { dc: 0, dr: 1 },
-    { dc: -1, dr: 0 },
-    { dc: 1, dr: 0 },
-  ];
-
-  while (queue.length > 0) {
-    const curr = queue.shift();
-    const currKey = key(curr.col, curr.row);
-
-    if (currKey === endKey) {
-      const path = [];
-      let k = endKey;
-      while (k !== startKey) {
-        const [c, r] = k.split(",").map(Number);
-        path.unshift({ col: c, row: r });
-        k = parent.get(k);
-      }
-      return path;
-    }
-
-    for (const d of dirs) {
-      const nc = curr.col + d.dc;
-      const nr = curr.row + d.dr;
-      const nk = key(nc, nr);
-      if (visited.has(nk)) continue;
-      if (!isWalkable(nc, nr, blockedTiles)) continue;
-      visited.add(nk);
-      parent.set(nk, currKey);
-      queue.push({ col: nc, row: nr });
-    }
+function pickRunForRawEvent(rawEvent, forceRunId = null) {
+  if (forceRunId) {
+    const forced = ensureRun(forceRunId, {
+      agentId: forceRunId.startsWith("manual:")
+        ? `codex:run:${forceRunId.split(":")[1] || "manual"}`
+        : `codex:${forceRunId}`,
+      label: forceRunId.startsWith("manual:")
+        ? `codex:run:${forceRunId.split(":")[1] || "manual"}`
+        : `codex:${forceRunId}`,
+    });
+    return forced;
   }
 
-  return [];
-}
-
-function findNearestOpenTile(col, row) {
-  if (isWalkable(col, row, BLOCKED_TILES)) return { col, row };
-
-  for (let radius = 1; radius < 24; radius += 1) {
-    for (let y = row - radius; y <= row + radius; y += 1) {
-      for (let x = col - radius; x <= col + radius; x += 1) {
-        if (Math.abs(x - col) !== radius && Math.abs(y - row) !== radius) continue;
-        if (isWalkable(x, y, BLOCKED_TILES)) return { col: x, row: y };
-      }
-    }
+  const identity = sanitizeRunIdentity(extractRunIdentity(rawEvent));
+  if (identity) {
+    const runId = `explicit:${identity}`;
+    const run = ensureRun(runId, {
+      agentId: getRunLabelFromIdentity(identity),
+      label: getRunLabelFromIdentity(identity),
+      simulated: identity.startsWith("sim-"),
+    });
+    return run;
   }
 
-  return { col: HQ.x, row: HQ.y };
-}
-
-function seatForFile(filePath, district) {
-  const seats = DISTRICT_SEATS[district] || DISTRICT_SEATS.Backend;
-  return seats[hashString(filePath) % seats.length];
-}
-
-function spawnVehicleToDistrict(district, color = "#f1c40f") {
-  const center = districtCenter(district);
-  const target = findNearestOpenTile(center.x, center.y);
-  const path = findPath(HQ.x, HQ.y, target.col, target.row, BLOCKED_TILES);
-
-  if (path.length === 0) return;
-
-  const spawn = tileCenter(HQ.x, HQ.y);
-
-  state.vehicles.push({
-    x: spawn.x,
-    y: spawn.y,
-    tileCol: HQ.x,
-    tileRow: HQ.y,
-    path,
-    moveProgress: 0,
-    dir: Direction.DOWN,
-    frame: 0,
-    frameTimer: 0,
-    palette: hashString(`${district}-${Date.now()}`) % CHARACTER_ATLASES.length,
-    state: CharacterState.WALK,
-    currentTool: null,
-    color,
+  return ensureRun(state.activeManualRunId || "main", {
+    agentId:
+      state.activeManualRunId && state.activeManualRunId.startsWith("manual:")
+        ? `codex:run:${state.activeManualRunId.split(":")[1] || "main"}`
+        : "codex:main",
+    label:
+      state.activeManualRunId && state.activeManualRunId.startsWith("manual:")
+        ? `codex:run:${state.activeManualRunId.split(":")[1] || "main"}`
+        : "codex:main",
   });
 }
 
-function spawnEffectPulse(x, y, color = "#2ecc71", ttl = 0.8) {
-  state.effects.push({ type: "pulse", x, y, color, ttl, age: 0 });
+function pruneTimes(list, now, windowMs) {
+  while (list.length > 0 && now - list[0] > windowMs) {
+    list.shift();
+  }
 }
 
-function spawnEffectBeacon(x, y, color = "#e74c3c", ttl = 2.0) {
-  state.effects.push({ type: "beacon", x, y, color, ttl, age: 0, blink: 0 });
+function rotateLine(run, who, lines, cooldownMs = 5000) {
+  const now = nowMs();
+  if (now - run.lastBubbleAt[who] < cooldownMs) return;
+  const npc = run.npcs[who];
+  const next = lines[npc.nextIndex % lines.length];
+  npc.text = next;
+  npc.until = now + 5000;
+  npc.nextIndex += 1;
+  run.lastBubbleAt[who] = now;
 }
 
-function applyFileChange(filePath, district, toolName) {
-  const seat = seatForFile(filePath, district);
-  const key = `${district}:${seat.id}`;
+function applyDerivedEvent(run, derived, options = {}) {
+  const transient = options.transient !== false;
+  const ts = derived.ts || nowMs();
+  const rawType = derived.rawType || "unknown";
+  const text = `${rawType} ${derived.message || ""}`.toLowerCase();
 
-  const prev = state.agents.get(key);
-  const touches = (prev?.touches || 0) + 1;
-  const level = buildingLevel(touches);
-  const center = tileCenter(seat.seatCol, seat.seatRow);
+  if (run.firstTs === null) run.firstTs = ts;
+  run.lastTs = Math.max(run.lastTs || 0, ts);
 
-  const agent =
-    prev ||
-    {
-      id: key,
-      x: center.x,
-      y: center.y,
-      tileCol: seat.seatCol,
-      tileRow: seat.seatRow,
-      state: CharacterState.TYPE,
-      dir: seat.facingDir,
-      frame: 0,
-      frameTimer: 0,
-      currentTool: toolName,
-      palette: hashString(filePath) % CHARACTER_ATLASES.length,
-      district,
+  if (derived.kind === "step.started") {
+    run.status = "working";
+  }
+
+  if (derived.kind === "step.ended") {
+    if (run.status !== "error") {
+      run.status = "done";
+    }
+  }
+
+  if (derived.kind === "tool.activity") {
+    run.toolCount += 1;
+    run.lastToolAt = ts;
+    run.toolTimes.push(ts);
+    run.status = "working";
+
+    const district = districtFromText(`${text} ${derived.toolName || ""}`);
+    if (transient) spawnVehicle(run, district, derived.toolName || "tool");
+
+    if (run.toolTimes.length >= 6) {
+      rotateLine(run, "mrt", MRT_LINES, 4000);
+    }
+  }
+
+  if (derived.kind === "file.changed" && derived.filePath) {
+    run.fileCount += 1;
+    run.lastFileChangeAt = ts;
+    run.fileTimes.push(ts);
+
+    const district = districtFromPath(derived.filePath);
+    run.districtTouches[district] += 1;
+
+    const slots = DISTRICT_SLOTS[district];
+    const slotIndex = hashString(derived.filePath) % slots.length;
+
+    const previous = run.fileStats.get(derived.filePath) || {
       touches: 0,
-      level: 1,
+      district,
+      slotIndex,
     };
 
-  agent.currentTool = toolName || agent.currentTool;
-  agent.touches = touches;
-  agent.level = level;
-  agent.filePath = filePath;
+    previous.touches += 1;
+    previous.district = district;
+    previous.slotIndex = slotIndex;
+    run.fileStats.set(derived.filePath, previous);
 
-  state.agents.set(key, agent);
-  state.buildings.set(key, { touches, level, district });
-
-  if (level > (prev?.level || 0)) {
-    spawnEffectPulse(seat.seatCol, seat.seatRow, "#2ecc71", 0.9);
-  }
-}
-
-function handleCodexEvent(evt) {
-  const eventType = typeOfEvent(evt);
-  state.lastEventType = eventType;
-  addLogLine(`${new Date().toLocaleTimeString()}  ${eventType}`);
-
-  const guessedDistrict = chooseDistrictFromEvent(evt, "Backend");
-  const toolName = extractToolName(evt);
-
-  if (isToolCallEvent(evt, eventType)) {
-    spawnVehicleToDistrict(guessedDistrict, "#f1c40f");
+    const slotMap = run.slotStats[district];
+    const slotState = slotMap.get(slotIndex) || { touches: 0, level: 1, filePath: derived.filePath };
+    slotState.touches += 1;
+    slotState.level = Math.max(slotState.level, levelFromTouches(previous.touches));
+    slotState.filePath = derived.filePath;
+    slotMap.set(slotIndex, slotState);
   }
 
-  const paths = extractFilePaths(evt);
-  for (const filePath of paths) {
-    const district = chooseDistrictFromPath(filePath);
-    applyFileChange(filePath, district, toolName);
+  if (derived.kind === "error") {
+    run.errorCount += 1;
+    run.failureStreak += 1;
+    run.status = "error";
+
+    const signature = derived.signature || (derived.message || rawType).toLowerCase().slice(0, 90);
+    run.errorSignatures.push({ ts, signature });
+
+    const district = districtFromText(`${text} ${derived.message || ""}`);
+    if (transient) {
+      spawnBeacon(run, district);
+      spawnSmoke(run, district);
+    }
+
+    rotateLine(run, "auntie", AUNTIE_LINES, 2600);
+
+    if (district === "Jurong") {
+      rotateLine(run, "uncle", UNCLE_LINES, 3600);
+    }
   }
 
-  const center = districtCenter(guessedDistrict);
+  if (derived.kind === "success") {
+    run.successCount += 1;
+    run.failureStreak = 0;
+    if (run.status !== "error") {
+      run.status = "done";
+    }
 
-  if (isErrorEvent(evt, eventType)) {
-    spawnEffectBeacon(center.x, center.y, "#ff4f64", 2.0);
-  } else if (isSuccessEvent(evt, eventType)) {
-    spawnEffectPulse(center.x, center.y, "#35d07f", 1.0);
+    if (transient) {
+      spawnFireworks(run);
+    }
   }
 
-  updateHud();
-}
+  if (derived.kind === "note") {
+    run.noteCount += 1;
+  }
 
-function updateAgents(dt) {
-  for (const agent of state.agents.values()) {
-    agent.frameTimer += dt;
-    if (agent.frameTimer >= TYPE_FRAME_DURATION_SEC) {
-      agent.frameTimer -= TYPE_FRAME_DURATION_SEC;
-      agent.frame = (agent.frame + 1) % 2;
+  if (/codex\.exit/.test(rawType.toLowerCase())) {
+    if (String(derived.message || "").includes("0")) {
+      run.status = "done";
     }
   }
 }
 
-function updateVehicles(dt) {
-  for (let i = state.vehicles.length - 1; i >= 0; i -= 1) {
-    const v = state.vehicles[i];
-    v.frameTimer += dt;
-    if (v.frameTimer >= WALK_FRAME_DURATION_SEC) {
-      v.frameTimer -= WALK_FRAME_DURATION_SEC;
-      v.frame = (v.frame + 1) % 4;
+function evaluateStuck(run, clock = nowMs()) {
+  const windowMs = 2 * 60 * 1000;
+
+  pruneTimes(run.toolTimes, clock, windowMs);
+  pruneTimes(run.fileTimes, clock, windowMs);
+
+  while (run.errorSignatures.length > 0 && clock - run.errorSignatures[0].ts > windowMs) {
+    run.errorSignatures.shift();
+  }
+
+  const signatureCounts = new Map();
+  for (const item of run.errorSignatures) {
+    signatureCounts.set(item.signature, (signatureCounts.get(item.signature) || 0) + 1);
+  }
+
+  const repeatedError = Array.from(signatureCounts.values()).some((count) => count >= 2);
+  const busyNoFile = run.toolTimes.length >= 5 && run.fileTimes.length === 0;
+  const failureSpree = run.failureStreak >= 3;
+
+  let score = 0;
+  if (repeatedError) score += 0.45;
+  if (busyNoFile) score += 0.35;
+  if (failureSpree) score += 0.3;
+  if (run.status === "error") score += 0.12;
+
+  run.stuckScore = clamp(score, 0, 1);
+
+  if (run.stuckScore > 0.7) {
+    if (busyNoFile) {
+      run.stuckReason = "Tool loops are active but files are not changing.";
+      run.intervention = "Ask the agent to summarise what it tried and propose next steps";
+    } else {
+      run.stuckReason = "Repeated failures detected.";
+      run.intervention = "Try narrowing scope and asking for one failing test only";
+    }
+    rotateLine(run, "auntie", AUNTIE_LINES, 2200);
+  } else {
+    run.stuckReason = "";
+    run.intervention = "No intervention needed yet.";
+  }
+}
+
+function summariseEvent(derivedEvents) {
+  const kinds = derivedEvents.map((item) => item.kind);
+
+  if (kinds.includes("error")) {
+    const err = derivedEvents.find((item) => item.kind === "error");
+    return err?.message || "Error";
+  }
+  if (kinds.includes("file.changed")) {
+    const file = derivedEvents.find((item) => item.kind === "file.changed");
+    return `Changed ${file?.filePath || "file"}`;
+  }
+  if (kinds.includes("success")) {
+    return "Success signal";
+  }
+  if (kinds.includes("tool.activity")) {
+    const tool = derivedEvents.find((item) => item.kind === "tool.activity");
+    return `Tool activity ${tool?.toolName ? `(${tool.toolName})` : ""}`.trim();
+  }
+  const note = derivedEvents.find((item) => item.kind === "note");
+  return note?.message || "Note";
+}
+
+function addTimelineRecord(run, rawEvent, derivedEvents) {
+  const ts = derivedEvents[0]?.ts || getRawEventTimestamp(rawEvent);
+  const rawType = derivedEvents[0]?.rawType || getRawEventType(rawEvent);
+  const fileEvent = derivedEvents.find((item) => item.kind === "file.changed");
+  const district = fileEvent ? districtFromPath(fileEvent.filePath) : districtFromText(rawType);
+
+  const record = {
+    id: state.timelineEventId,
+    ts,
+    rawType,
+    rawEvent,
+    derived: derivedEvents,
+    summary: summariseEvent(derivedEvents),
+    district,
+    filePath: fileEvent?.filePath || null,
+  };
+
+  state.timelineEventId += 1;
+
+  run.timeline.push(record);
+  if (run.timeline.length > 3000) run.timeline.shift();
+
+  return record;
+}
+
+function queuePersistence() {
+  if (state.persistTimer) return;
+  state.persistTimer = window.setTimeout(() => {
+    state.persistTimer = null;
+    persistRunsToStorage();
+  }, 600);
+}
+
+function persistRunsToStorage() {
+  const data = state.runOrder
+    .map((runId) => {
+      const run = state.runs.get(runId);
+      if (!run) return null;
+      return {
+        runId: run.runId,
+        agentId: run.agentId,
+        label: run.label,
+        manual: run.manual,
+        simulated: run.simulated,
+        createdAt: run.createdAt,
+        rawEvents: run.rawEvents.slice(-1500),
+      };
+    })
+    .filter(Boolean);
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    // Ignore localStorage quota errors.
+  }
+}
+
+function persistSettings() {
+  const payload = {
+    repoPath: state.git.repoPath,
+    useGitDiff: state.git.useGitDiff,
+  };
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage write failures.
+  }
+}
+
+function restoreSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+    if (typeof parsed.repoPath === "string") {
+      state.git.repoPath = parsed.repoPath;
+    }
+    if (typeof parsed.useGitDiff === "boolean") {
+      state.git.useGitDiff = parsed.useGitDiff;
+    }
+  } catch {
+    // Ignore invalid settings payload.
+  }
+
+  repoPathInputEl.value = state.git.repoPath;
+  useGitDiffToggleEl.checked = state.git.useGitDiff;
+}
+
+function restoreRunsFromStorage() {
+  let parsed = [];
+  try {
+    parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  } catch {
+    parsed = [];
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) return;
+
+  let maxManualId = 0;
+
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    if (!item.runId || !Array.isArray(item.rawEvents)) continue;
+
+    const run = ensureRun(item.runId, {
+      agentId: item.agentId || `codex:${item.runId}`,
+      label: item.label || item.agentId || `codex:${item.runId}`,
+      manual: Boolean(item.manual),
+      simulated: Boolean(item.simulated),
+    });
+
+    run.createdAt = Number(item.createdAt) || run.createdAt;
+
+    for (const rawEvent of item.rawEvents) {
+      integrateRawEvent(run, rawEvent, {
+        source: "restore",
+        transient: false,
+        skipPersistence: true,
+        allowGitDiff: false,
+      });
     }
 
-    if (v.path.length === 0) {
-      state.vehicles.splice(i, 1);
+    run.vehicles = [];
+    run.effects = [];
+
+    if (typeof run.runId === "string" && run.runId.startsWith("manual:")) {
+      const parsedManual = Number(run.runId.split(":")[1]);
+      if (Number.isFinite(parsedManual)) {
+        maxManualId = Math.max(maxManualId, parsedManual);
+      }
+    }
+  }
+
+  if (maxManualId > 0) {
+    state.manualRunCounter = maxManualId;
+  }
+}
+
+function ingestRawEvent(rawEvent, options = {}) {
+  if (!rawEvent || typeof rawEvent !== "object") return;
+
+  const run = pickRunForRawEvent(rawEvent, options.forceRunId || null);
+  integrateRawEvent(run, rawEvent, {
+    source: options.source || "ws",
+    transient: options.transient !== false,
+    skipPersistence: options.skipPersistence === true,
+    allowGitDiff: options.allowGitDiff !== false,
+  });
+
+  if (!state.selectedRunId) {
+    state.selectedRunId = run.runId;
+  }
+
+  renderUi();
+}
+
+function integrateDerivedSet(run, rawEvent, derivedEvents, options = {}) {
+  const transient = options.transient !== false;
+
+  if (run.rawEvents.length > 4000) {
+    run.rawEvents.shift();
+  }
+  run.rawEvents.push(rawEvent);
+
+  const record = addTimelineRecord(run, rawEvent, derivedEvents);
+
+  for (const derived of derivedEvents) {
+    applyDerivedEvent(run, derived, { transient });
+  }
+
+  evaluateStuck(run);
+
+  if (run.stuckScore > 0.7 && transient) {
+    run.highlight = {
+      district: record.district,
+      filePath: record.filePath,
+      until: nowMs() + 2400,
+    };
+  }
+
+  if (!options.skipPersistence) {
+    queuePersistence();
+  }
+
+  return record;
+}
+
+function shouldPollGitDiff(run, derivedEvents, source) {
+  if (source === "git") return false;
+  if (!state.git.useGitDiff || !state.git.repoPath) return false;
+
+  if (run.rawEvents.length <= 1) return true;
+
+  if (derivedEvents.some((item) => item.kind === "step.started" || item.kind === "step.ended")) {
+    return true;
+  }
+
+  return false;
+}
+
+async function pollGitDiffForRun(run) {
+  const currentTime = nowMs();
+  if (currentTime - state.git.lastPollAt < 1500) return;
+  state.git.lastPollAt = currentTime;
+
+  try {
+    const response = await fetch(`${DIFF_HELPER_URL}/api/diff`);
+    if (!response.ok) {
+      helperStatusEl.textContent = "Helper: diff unavailable";
+      return;
+    }
+
+    const payload = await response.json();
+    if (!payload || !Array.isArray(payload.files)) return;
+
+    helperStatusEl.textContent = `Helper: ${payload.changedFiles || payload.files.length} changed file(s)`;
+
+    const fingerprint = payload.files
+      .map((file) => `${file.path}:${file.added}:${file.deleted}`)
+      .sort()
+      .join("|");
+
+    if (fingerprint === state.git.lastFingerprint) {
+      return;
+    }
+
+    state.git.lastFingerprint = fingerprint;
+
+    const derived = payload.files.map((file) => ({
+      kind: "file.changed",
+      rawType: "helper.git.diff",
+      ts: nowMs(),
+      filePath: file.path,
+      message: `git diff +${file.added} -${file.deleted}`,
+      added: file.added,
+      deleted: file.deleted,
+    }));
+
+    const rawEvent = {
+      type: "helper.git.diff",
+      ts: nowMs(),
+      files: payload.files,
+      repoPath: payload.repoPath,
+    };
+
+    integrateDerivedSet(run, rawEvent, derived, {
+      source: "git",
+      transient: true,
+      skipPersistence: false,
+    });
+
+    renderUi();
+  } catch {
+    helperStatusEl.textContent = "Helper: offline";
+  }
+}
+
+function integrateRawEvent(run, rawEvent, options = {}) {
+  const source = options.source || "ws";
+  const derivedEvents = mapCodexToVizEvents(rawEvent);
+  const record = integrateDerivedSet(run, rawEvent, derivedEvents, {
+    transient: options.transient !== false,
+    skipPersistence: options.skipPersistence === true,
+  });
+
+  if (shouldPollGitDiff(run, derivedEvents, source) && options.allowGitDiff !== false) {
+    pollGitDiffForRun(run);
+  }
+
+  return record;
+}
+
+function selectRun(runId) {
+  if (!state.runs.has(runId)) return;
+
+  state.selectedRunId = runId;
+  if (state.replay.active && state.replay.sourceRunId !== runId) {
+    stopReplay();
+  }
+
+  renderUi();
+}
+
+function createManualRun() {
+  state.manualRunCounter += 1;
+  const runId = `manual:${state.manualRunCounter}`;
+  const run = ensureRun(runId, {
+    manual: true,
+    agentId: `codex:run:${state.manualRunCounter}`,
+    label: `codex:run:${state.manualRunCounter}`,
+  });
+
+  state.activeManualRunId = run.runId;
+  state.selectedRunId = run.runId;
+  renderUi();
+}
+
+function spawnVehicle(run, district, toolName) {
+  const start = tileToPx(HQ.x, HQ.y);
+  const end = districtCenterPx(district);
+
+  run.vehicles.push({
+    x: start.x,
+    y: start.y,
+    startX: start.x,
+    startY: start.y,
+    endX: end.x,
+    endY: end.y,
+    progress: 0,
+    duration: 1.2 + (hashString(`${toolName}-${nowMs()}`) % 100) / 100,
+    district,
+    toolName,
+    color: district === "Jurong" ? "#ffb269" : district === "Bugis" ? "#7ce0ac" : "#79b8ff",
+  });
+}
+
+function spawnBeacon(run, district) {
+  const center = districtCenterPx(district);
+  run.effects.push({
+    type: "beacon",
+    x: center.x,
+    y: center.y,
+    age: 0,
+    ttl: 1.8,
+  });
+}
+
+function spawnSmoke(run, district) {
+  const center = districtCenterPx(district);
+  for (let i = 0; i < 6; i += 1) {
+    run.effects.push({
+      type: "smoke",
+      x: center.x + (Math.random() * 20 - 10),
+      y: center.y + 8 + Math.random() * 8,
+      vx: Math.random() * 8 - 4,
+      vy: -12 - Math.random() * 10,
+      age: 0,
+      ttl: 1.6 + Math.random() * 0.8,
+      size: 4 + Math.random() * 4,
+    });
+  }
+}
+
+function spawnFireworks(run) {
+  const px = (MARINA.x + MARINA.w / 2) * WORLD.tile;
+  const py = (MARINA.y + 1) * WORLD.tile;
+
+  const particles = [];
+  for (let i = 0; i < 22; i += 1) {
+    const angle = (Math.PI * 2 * i) / 22;
+    const speed = 28 + Math.random() * 30;
+    particles.push({
+      x: px,
+      y: py,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0,
+      ttl: 0.85 + Math.random() * 0.5,
+      color: i % 2 === 0 ? "#ffd77f" : "#9af3ff",
+    });
+  }
+
+  run.effects.push({
+    type: "firework",
+    particles,
+    age: 0,
+    ttl: 1.4,
+  });
+}
+
+function updateRunAnimations(run, dt) {
+  for (let i = run.vehicles.length - 1; i >= 0; i -= 1) {
+    const vehicle = run.vehicles[i];
+    vehicle.progress += dt / vehicle.duration;
+    if (vehicle.progress >= 1) {
+      run.vehicles.splice(i, 1);
       continue;
     }
 
-    const nextTile = v.path[0];
-    v.dir = directionBetween(v.tileCol, v.tileRow, nextTile.col, nextTile.row);
-    v.moveProgress += (WALK_SPEED_PX_PER_SEC / WORLD.tile) * dt;
+    const t = vehicle.progress;
+    vehicle.x = vehicle.startX + (vehicle.endX - vehicle.startX) * t;
+    vehicle.y = vehicle.startY + (vehicle.endY - vehicle.startY) * t;
+  }
 
-    const fromCenter = tileCenter(v.tileCol, v.tileRow);
-    const toCenter = tileCenter(nextTile.col, nextTile.row);
-    const t = Math.min(v.moveProgress, 1);
+  for (let i = run.effects.length - 1; i >= 0; i -= 1) {
+    const effect = run.effects[i];
+    effect.age += dt;
 
-    v.x = fromCenter.x + (toCenter.x - fromCenter.x) * t;
-    v.y = fromCenter.y + (toCenter.y - fromCenter.y) * t;
+    if (effect.type === "smoke") {
+      effect.x += effect.vx * dt;
+      effect.y += effect.vy * dt;
+    }
 
-    if (v.moveProgress >= 1) {
-      v.tileCol = nextTile.col;
-      v.tileRow = nextTile.row;
-      v.x = toCenter.x;
-      v.y = toCenter.y;
-      v.path.shift();
-      v.moveProgress = 0;
+    if (effect.type === "firework") {
+      for (const particle of effect.particles) {
+        particle.life += dt;
+        particle.x += particle.vx * dt;
+        particle.y += particle.vy * dt;
+        particle.vy += 18 * dt;
+      }
+    }
+
+    if (effect.age >= effect.ttl) {
+      run.effects.splice(i, 1);
     }
   }
-}
 
-function updateEffects(dt) {
-  for (let i = state.effects.length - 1; i >= 0; i -= 1) {
-    const effect = state.effects[i];
-    effect.age += dt;
-    if (effect.type === "beacon") {
-      effect.blink += dt;
+  for (const npc of Object.values(run.npcs)) {
+    if (npc.until < nowMs()) {
+      npc.text = "";
     }
-    if (effect.age >= effect.ttl) {
-      state.effects.splice(i, 1);
-    }
+  }
+
+  if (run.highlight && run.highlight.until < nowMs()) {
+    run.highlight = null;
   }
 }
 
@@ -675,191 +972,10 @@ function drawPx(target, x, y, w, h, color) {
   target.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
 }
 
-function fillTile(target, tx, ty, color, inset = 0) {
-  const px = tx * WORLD.tile + inset;
-  const py = ty * WORLD.tile + inset;
-  drawPx(target, px, py, WORLD.tile - inset * 2, WORLD.tile - inset * 2, color);
-}
-
-function getCachedSprite(sprite, zoom = 1) {
-  let cache = spriteCache.get(sprite);
-  if (!cache) {
-    cache = new Map();
-    spriteCache.set(sprite, cache);
-  }
-
-  if (cache.has(zoom)) {
-    return cache.get(zoom);
-  }
-
-  const rows = sprite.length;
-  const cols = sprite[0].length;
-  const offscreen = document.createElement("canvas");
-  offscreen.width = cols * zoom;
-  offscreen.height = rows * zoom;
-
-  const c = offscreen.getContext("2d");
-  c.imageSmoothingEnabled = false;
-
-  for (let r = 0; r < rows; r += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      const color = sprite[r][col];
-      if (!color) continue;
-      c.fillStyle = color;
-      c.fillRect(col * zoom, r * zoom, zoom, zoom);
-    }
-  }
-
-  cache.set(zoom, offscreen);
-  return offscreen;
-}
-
-function drawSpriteData(target, sprite, x, y, zoom = 1) {
-  const cached = getCachedSprite(sprite, zoom);
-  target.drawImage(cached, Math.round(x), Math.round(y));
-}
-
-function isReadingTool(tool) {
-  if (!tool) return false;
-  return READING_TOOLS.has(tool);
-}
-
-function drawCharacterSprite(ch, seated = false) {
-  const atlas = CHARACTER_ATLASES[ch.palette % CHARACTER_ATLASES.length];
-  const frameWalk = [0, 1, 2, 1];
-
-  let row = 0;
-  if (ch.dir === Direction.UP) row = 1;
-  else if (ch.dir === Direction.LEFT || ch.dir === Direction.RIGHT) row = 2;
-
-  let frameCol = 1;
-  if (ch.state === CharacterState.WALK) {
-    frameCol = frameWalk[ch.frame % 4];
-  } else if (ch.state === CharacterState.TYPE) {
-    frameCol = isReadingTool(ch.currentTool) ? 5 + (ch.frame % 2) : 3 + (ch.frame % 2);
-  }
-
-  const drawW = 16 * CHARACTER_RENDER_SCALE;
-  const drawH = 32 * CHARACTER_RENDER_SCALE;
-  const x = Math.round(ch.x - drawW / 2);
-  const yOffset = seated ? CHARACTER_SITTING_OFFSET_PX : 0;
-  const y = Math.round(ch.y + yOffset - drawH);
-
-  drawPx(
-    ctx,
-    ch.x - 7 * CHARACTER_RENDER_SCALE,
-    ch.y + 6,
-    14 * CHARACTER_RENDER_SCALE,
-    3,
-    "rgba(0,0,0,0.28)"
-  );
-
-  if (atlas.complete && atlas.naturalWidth > 0) {
-    const sx = frameCol * 16;
-    const sy = row * 32;
-
-    if (ch.dir === Direction.LEFT) {
-      ctx.save();
-      ctx.scale(-1, 1);
-      ctx.drawImage(atlas, sx, sy, 16, 32, -x - drawW, y, drawW, drawH);
-      ctx.restore();
-    } else {
-      ctx.drawImage(atlas, sx, sy, 16, 32, x, y, drawW, drawH);
-    }
-    return;
-  }
-
-  drawPx(ctx, x + 4, y + 8, 8, 8, "#f2c4a8");
-  drawPx(ctx, x + 4, y + 16, 8, 8, "#76b2ff");
-  drawPx(ctx, x + 5, y + 24, 3, 6, "#334466");
-  drawPx(ctx, x + 8, y + 24, 3, 6, "#334466");
-}
-
-function drawAgents() {
-  const agents = Array.from(state.agents.values()).sort((a, b) => a.y - b.y);
-  for (const agent of agents) {
-    drawCharacterSprite(agent, true);
-    if (agent.level >= 3) {
-      drawPx(ctx, agent.x - 5, agent.y - 22, 10, 2, "#ffd870");
-      drawPx(ctx, agent.x - 3, agent.y - 24, 6, 2, "#ffd870");
-    }
-  }
-}
-
-function drawVehicles() {
-  const movers = [...state.vehicles].sort((a, b) => a.y - b.y);
-  for (const v of movers) {
-    drawCharacterSprite(v, false);
-  }
-}
-
-function drawEffects() {
-  for (const e of state.effects) {
-    const p = tileCenter(e.x, e.y);
-    const progress = Math.min(1, e.age / e.ttl);
-
-    if (e.type === "pulse") {
-      const size = Math.floor(4 + progress * 14);
-      const alpha = 1 - progress;
-      ctx.strokeStyle = `rgba(180,255,196,${alpha.toFixed(3)})`;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(p.x - size, p.y - size, size * 2, size * 2);
-    }
-
-    if (e.type === "beacon") {
-      const on = Math.floor(e.blink / 0.2) % 2 === 0;
-      if (on) {
-        drawSpriteData(ctx, BUBBLE_PERMISSION_SPRITE, p.x - 6, p.y - 28, 1);
-      } else {
-        drawSpriteData(ctx, BUBBLE_WAITING_SPRITE, p.x - 6, p.y - 28, 1);
-      }
-    }
-  }
-}
-
-function render() {
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(STATIC_LAYER, 0, 0);
-  drawAgents();
-  drawVehicles();
-  drawEffects();
-}
-
-function updateHud() {
-  wsStatusEl.textContent = `WS: ${state.wsState}`;
-  metricsEl.textContent = `agents=${state.agents.size} couriers=${state.vehicles.length} effects=${state.effects.length}`;
-  lastTypeEl.textContent = `last event: ${state.lastEventType}`;
-  logLinesEl.textContent = state.lastEvents.join("\n");
-}
-
-function connectWebSocket() {
-  const ws = new WebSocket("ws://localhost:8787");
-
-  ws.addEventListener("open", () => {
-    state.wsState = "connected";
-    updateHud();
-  });
-
-  ws.addEventListener("close", () => {
-    state.wsState = "disconnected";
-    updateHud();
-    setTimeout(connectWebSocket, 1200);
-  });
-
-  ws.addEventListener("error", () => {
-    state.wsState = "error";
-    updateHud();
-  });
-
-  ws.addEventListener("message", (msg) => {
-    try {
-      const evt = JSON.parse(msg.data);
-      handleCodexEvent(evt);
-    } catch {
-      addLogLine("invalid ws payload");
-      updateHud();
-    }
-  });
+function drawText(target, text, x, y, color = "#f4f0de", size = 12) {
+  target.fillStyle = color;
+  target.font = `bold ${size}px "Lucida Console", "Monaco", monospace`;
+  target.fillText(text, Math.round(x), Math.round(y));
 }
 
 function buildStaticLayer() {
@@ -869,480 +985,900 @@ function buildStaticLayer() {
   const c = layer.getContext("2d");
   c.imageSmoothingEnabled = false;
 
-  drawWorldTiles(c);
-  drawDistrictFurniture(c);
-  drawDecor(c);
-  drawHQ(c);
-  drawDistrictLabels(c);
+  drawPx(c, 0, 0, WORLD.width, WORLD.height, "#15314a");
+
+  for (let y = 0; y < WORLD.height; y += WORLD.tile) {
+    const tone = y < 180 ? "#1f4f70" : y < 320 ? "#21445e" : "#1a374e";
+    drawPx(c, 0, y, WORLD.width, WORLD.tile, tone);
+  }
+
+  for (let i = 0; i < 34; i += 1) {
+    const x = 20 + i * 36;
+    const h = 40 + ((i * 17) % 90);
+    drawPx(c, x, 220 - h, 22, h, i % 3 === 0 ? "#223b4f" : "#2a4a61");
+    drawPx(c, x + 4, 220 - h + 8, 3, 3, "#a6d8ff");
+    drawPx(c, x + 12, 220 - h + 18, 3, 3, "#a6d8ff");
+  }
+
+  drawPx(c, MARINA.x * WORLD.tile, MARINA.y * WORLD.tile, MARINA.w * WORLD.tile, MARINA.h * WORLD.tile, "#2a84be");
+  drawPx(c, MARINA.x * WORLD.tile, MARINA.y * WORLD.tile + 10, MARINA.w * WORLD.tile, 2, "#8dd4ff");
+  drawPx(c, MARINA.x * WORLD.tile, MARINA.y * WORLD.tile + 28, MARINA.w * WORLD.tile, 2, "#8dd4ff");
+
+  for (const [name, district] of Object.entries(DISTRICTS)) {
+    const px = district.x * WORLD.tile;
+    const py = district.y * WORLD.tile;
+    const w = district.w * WORLD.tile;
+    const h = district.h * WORLD.tile;
+
+    drawPx(c, px, py, w, h, district.color);
+    drawPx(c, px + 2, py + 2, w - 4, h - 4, "rgba(0,0,0,0.18)");
+
+    drawPx(c, px, py, w, 2, district.glow);
+    drawPx(c, px, py + h - 2, w, 2, district.glow);
+    drawPx(c, px, py, 2, h, district.glow);
+    drawPx(c, px + w - 2, py, 2, h, district.glow);
+
+    drawText(c, name, px + 8, py + 18, "#f8f3df", 12);
+  }
+
+  drawMerlion(c);
+  drawMrtTrack(c);
 
   return layer;
 }
 
-function drawWorldTiles(c) {
-  drawPx(c, 0, 0, WORLD.width, WORLD.height, "#192b3c");
+function drawMerlion(target) {
+  const base = tileToPx(HQ.x, HQ.y);
+  const x = base.x - 12;
+  const y = base.y - 22;
 
-  for (let y = 0; y < WORLD.rows; y += 1) {
-    for (let x = 0; x < WORLD.cols; x += 1) {
-      const kind = TILE_KIND[y][x];
-      const district = TILE_DISTRICT[y][x] || "Backend";
-      const palette = DISTRICT_PIXEL[district] || DISTRICT_PIXEL.Backend;
-      const px = x * WORLD.tile;
-      const py = y * WORLD.tile;
+  drawPx(target, x + 8, y + 28, 16, 12, "#b6c5d4");
+  drawPx(target, x + 11, y + 16, 10, 14, "#d8e4ee");
+  drawPx(target, x + 9, y + 8, 14, 10, "#dce8f2");
+  drawPx(target, x + 15, y + 5, 6, 5, "#dce8f2");
+  drawPx(target, x + 21, y + 9, 5, 3, "#8fd0ff");
+  drawPx(target, x + 25, y + 10, 7, 2, "#6ec2ff");
+  drawPx(target, x + 6, y + 38, 20, 4, "#8e6e4a");
 
-      if (kind === "outside") {
-        const base = (x + y) % 2 === 0 ? palette.outsideA : palette.outsideB;
-        drawPx(c, px, py, 16, 16, base);
-        drawPx(c, px, py, 16, 1, "rgba(255,255,255,0.05)");
-      } else if (kind === "office_floor") {
-        const base = (x + y) % 2 === 0 ? palette.floorA : palette.floorB;
-        drawPx(c, px, py, 16, 16, base);
-        drawPx(c, px, py, 16, 1, "rgba(255,255,255,0.08)");
-        drawPx(c, px, py, 1, 16, "rgba(0,0,0,0.08)");
-        if ((x + y) % 3 === 0) drawPx(c, px + 10, py + 3, 2, 2, "rgba(255,255,255,0.1)");
-      } else if (kind === "hall") {
-        drawPx(c, px, py, 16, 16, "#7f6b53");
-        drawPx(c, px, py + 2, 16, 2, "#9b8468");
-        drawPx(c, px, py + 8, 16, 1, "rgba(255,255,255,0.12)");
-      } else if (kind === "lobby") {
-        drawPx(c, px, py, 16, 16, "#b89f7a");
-        drawPx(c, px, py, 16, 2, "#d6c19a");
-        drawPx(c, px, py + 8, 16, 1, "rgba(0,0,0,0.14)");
-      } else if (kind === "meeting_floor") {
-        drawPx(c, px, py, 16, 16, "#9f8f77");
-        drawPx(c, px, py + 4, 16, 1, "rgba(255,255,255,0.1)");
-        drawPx(c, px, py + 12, 16, 1, "rgba(0,0,0,0.1)");
-      } else if (kind === "wall") {
-        drawPx(c, px, py, 16, 4, "#ece1cf");
-        drawPx(c, px, py + 4, 16, 12, "#a58967");
-        drawPx(c, px, py + 4, 2, 12, "#c8ae87");
-        drawPx(c, px + 13, py + 5, 2, 10, "#8a6d4a");
-        drawPx(c, px + 2, py + 2, 12, 1, palette.accent);
-      } else if (kind === "glass") {
-        drawPx(c, px, py, 16, 16, "#8db5c0");
-        drawPx(c, px, py, 16, 2, "#d4ebf3");
-        drawPx(c, px, py + 2, 2, 14, "#6d8c93");
-        drawPx(c, px + 14, py + 2, 2, 14, "#6d8c93");
-        drawPx(c, px + 4, py + 6, 8, 2, "rgba(255,255,255,0.25)");
+  drawText(target, "MERLION HQ", x - 16, y + 52, "#ffe7bd", 10);
+}
+
+function drawMrtTrack(target) {
+  const y = 210;
+  drawPx(target, 24, y, WORLD.width - 48, 4, "#7d6c52");
+  for (let x = 24; x < WORLD.width - 24; x += 18) {
+    drawPx(target, x, y + 4, 5, 2, "#b39f81");
+  }
+}
+
+function drawWaterShimmer(target, timeSec) {
+  const baseX = MARINA.x * WORLD.tile;
+  const baseY = MARINA.y * WORLD.tile;
+  const width = MARINA.w * WORLD.tile;
+  const rows = 5;
+
+  for (let i = 0; i < rows; i += 1) {
+    const y = baseY + 8 + i * 10;
+    const offset = Math.floor((timeSec * 16 + i * 5) % 20);
+    drawPx(target, baseX + offset, y, width - 20, 1, "rgba(188, 238, 255, 0.35)");
+  }
+}
+
+function drawDistrictBuildings(target, run) {
+  for (const [district, slots] of Object.entries(DISTRICT_SLOTS)) {
+    const slotMap = run?.slotStats?.[district] || new Map();
+
+    for (const slot of slots) {
+      const slotState = slotMap.get(slot.index);
+      if (!slotState) continue;
+      const level = slotState.level;
+
+      const px = slot.col * WORLD.tile;
+      const py = slot.row * WORLD.tile;
+      const height = level === 1 ? 10 : level === 2 ? 18 : 26;
+      const color =
+        district === "Bugis"
+          ? "#95f0bf"
+          : district === "Jurong"
+            ? "#ffc38b"
+              : district === "Changi"
+              ? "#c3e7ff"
+              : "#a9d3ff";
+
+      drawPx(target, px, py + (16 - height), 12, height, color);
+      drawPx(target, px + 2, py + (18 - height), 8, 2, "rgba(0,0,0,0.22)");
+      if (level >= 2) {
+        drawPx(target, px + 2, py + (14 - height), 2, 2, "#fff6b8");
+        drawPx(target, px + 6, py + (10 - height), 2, 2, "#fff6b8");
+      }
+      if (level >= 3) {
+        drawPx(target, px + 4, py + (6 - height), 4, 2, "#fff0aa");
       }
     }
   }
 }
 
-function drawDistrictFurniture(c) {
-  for (const seats of Object.values(DISTRICT_SEATS)) {
-    for (const seat of seats) {
-      const deskX = seat.deskCol * WORLD.tile;
-      const deskY = seat.deskRow * WORLD.tile;
-
-      drawSpriteData(c, DESK_SQUARE_SPRITE, deskX, deskY, 1);
-      drawSpriteData(c, PC_SPRITE, deskX + 8, deskY + 4, 1);
-      drawSpriteData(c, CHAIR_SPRITE, seat.seatCol * WORLD.tile, seat.seatRow * WORLD.tile, 1);
-    }
+function drawVehicles(target, run) {
+  for (const vehicle of run.vehicles) {
+    drawPx(target, vehicle.x - 7, vehicle.y - 4, 14, 7, vehicle.color);
+    drawPx(target, vehicle.x - 5, vehicle.y - 2, 6, 3, "#21384c");
+    drawPx(target, vehicle.x - 6, vehicle.y + 3, 3, 2, "#1f2123");
+    drawPx(target, vehicle.x + 2, vehicle.y + 3, 3, 2, "#1f2123");
   }
 }
 
-function drawDecor(c) {
-  for (const item of DECOR_ITEMS) {
-    if (item.type === "plant") {
-      drawSpriteData(c, PLANT_SPRITE, item.col * WORLD.tile, item.row * WORLD.tile - 8, 1);
-    }
-    if (item.type === "bookshelf") {
-      const px = item.col * WORLD.tile;
-      const py = item.row * WORLD.tile;
-      drawPx(c, px, py, 16, 16, "#64441d");
-      drawPx(c, px + 1, py + 2, 14, 2, "#a46e2c");
-      drawPx(c, px + 1, py + 7, 14, 2, "#a46e2c");
-      drawPx(c, px + 1, py + 12, 14, 2, "#a46e2c");
-      drawPx(c, px + 3, py + 3, 2, 3, "#d45050");
-      drawPx(c, px + 6, py + 3, 2, 3, "#5c97d2");
-      drawPx(c, px + 9, py + 3, 2, 3, "#6bb170");
-      drawPx(c, px + 12, py + 3, 2, 3, "#d3b25b");
-    }
-    if (item.type === "coffee") {
-      const px = item.col * WORLD.tile;
-      const py = item.row * WORLD.tile;
-      drawPx(c, px + 2, py + 2, 12, 12, "#6a7078");
-      drawPx(c, px + 4, py + 4, 8, 6, "#a6d7f5");
-      drawPx(c, px + 5, py + 11, 6, 2, "#3c3f45");
-    }
-  }
-}
+function drawEffects(target, run) {
+  for (const effect of run.effects) {
+    const progress = clamp(effect.age / effect.ttl, 0, 1);
 
-function drawHQ(c) {
-  const px = HQ.x * WORLD.tile;
-  const py = HQ.y * WORLD.tile;
-
-  drawPx(c, px - 16, py - 16, 48, 48, "#806547");
-  drawPx(c, px - 14, py - 14, 44, 44, "#a88a66");
-  drawPx(c, px - 6, py - 10, 28, 10, "#d6b085");
-  drawPx(c, px - 2, py + 1, 20, 10, "#7c5635");
-  drawPx(c, px + 4, py + 12, 8, 8, "#5c4028");
-
-  c.font = "bold 11px monospace";
-  c.fillStyle = "#f9f2dd";
-  c.fillText("RECEPTION", px - 15, py - 20);
-}
-
-function drawDistrictLabels(c) {
-  for (const [name, d] of Object.entries(DISTRICTS)) {
-    const x = d.x1 * WORLD.tile + 8;
-    const y = d.y1 * WORLD.tile + 7;
-
-    drawPx(c, x - 4, y - 2, 122, 20, "rgba(14,24,35,0.56)");
-    c.font = "bold 16px monospace";
-    c.fillStyle = "#f3f7ff";
-    c.fillText(name.toUpperCase(), x + 4, y + 13);
-  }
-}
-
-function createOfficeLayout() {
-  const tileKind = Array.from({ length: WORLD.rows }, () =>
-    Array.from({ length: WORLD.cols }, () => "outside")
-  );
-  const tileDistrict = Array.from({ length: WORLD.rows }, () =>
-    Array.from({ length: WORLD.cols }, () => null)
-  );
-  const blockedTiles = new Set();
-  const decor = [];
-  const seats = {
-    Frontend: [],
-    Backend: [],
-    Infra: [],
-    Tests: [],
-  };
-
-  function key(col, row) {
-    return `${col},${row}`;
-  }
-
-  function inBounds(col, row) {
-    return col >= 0 && col < WORLD.cols && row >= 0 && row < WORLD.rows;
-  }
-
-  function setTile(col, row, kind, district) {
-    if (!inBounds(col, row)) return;
-    tileKind[row][col] = kind;
-    tileDistrict[row][col] = district;
-  }
-
-  function block(col, row) {
-    if (!inBounds(col, row)) return;
-    blockedTiles.add(key(col, row));
-  }
-
-  function unblock(col, row) {
-    blockedTiles.delete(key(col, row));
-  }
-
-  function setWall(col, row, district) {
-    setTile(col, row, "wall", district);
-    block(col, row);
-  }
-
-  function setGlass(col, row, district) {
-    setTile(col, row, "glass", district);
-    block(col, row);
-  }
-
-  function carveHallPath(fromCol, fromRow, toCol, toRow, district) {
-    let x = fromCol;
-    let y = fromRow;
-
-    while (x !== toCol) {
-      setTile(x, y, "hall", district);
-      unblock(x, y);
-      x += Math.sign(toCol - x);
+    if (effect.type === "beacon") {
+      const size = 8 + Math.floor(progress * 16);
+      const alpha = 1 - progress;
+      target.strokeStyle = `rgba(255, 89, 89, ${alpha.toFixed(3)})`;
+      target.lineWidth = 2;
+      target.strokeRect(effect.x - size / 2, effect.y - size / 2, size, size);
+      drawPx(target, effect.x - 3, effect.y - 3, 6, 6, "#ff7575");
     }
 
-    while (y !== toRow) {
-      setTile(x, y, "hall", district);
-      unblock(x, y);
-      y += Math.sign(toRow - y);
+    if (effect.type === "smoke") {
+      const alpha = 1 - progress;
+      drawPx(target, effect.x, effect.y, effect.size, effect.size, `rgba(190, 190, 190, ${alpha.toFixed(3)})`);
     }
 
-    setTile(toCol, toRow, "hall", district);
-    unblock(toCol, toRow);
-  }
-
-  function pickDoorTowardsHQ(room) {
-    const centerX = Math.floor((room.x1 + room.x2) / 2);
-    const centerY = Math.floor((room.y1 + room.y2) / 2);
-    const dx = HQ.x - centerX;
-    const dy = HQ.y - centerY;
-
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      if (dx > 0) {
-        return { x: room.x2, y: centerY, insideX: room.x2 - 1, insideY: centerY };
+    if (effect.type === "firework") {
+      for (const particle of effect.particles) {
+        const lifeP = clamp(particle.life / particle.ttl, 0, 1);
+        if (lifeP >= 1) continue;
+        const alpha = 1 - lifeP;
+        drawPx(target, particle.x, particle.y, 2, 2, hexToRgba(particle.color, alpha.toFixed(3)));
       }
-      return { x: room.x1, y: centerY, insideX: room.x1 + 1, insideY: centerY };
     }
+  }
+}
 
-    if (dy > 0) {
-      return { x: centerX, y: room.y2, insideX: centerX, insideY: room.y2 - 1 };
-    }
-    return { x: centerX, y: room.y1, insideX: centerX, insideY: room.y1 + 1 };
+function drawNpc(target, npcData, runtimeState) {
+  const px = npcData.x * WORLD.tile;
+  const py = npcData.y * WORLD.tile;
+
+  drawPx(target, px + 3, py + 2, 8, 8, npcData.color);
+  drawPx(target, px + 4, py + 10, 6, 6, "#30495f");
+  drawPx(target, px + 3, py + 16, 3, 4, "#252f3c");
+  drawPx(target, px + 8, py + 16, 3, 4, "#252f3c");
+
+  drawText(target, npcData.label, px - 18, py - 2, "#f5e6c8", 9);
+
+  if (!runtimeState.text) return;
+
+  const text = runtimeState.text;
+  const width = Math.max(90, text.length * 6 + 10);
+  const bx = px + 18;
+  const by = py - 26;
+
+  drawPx(target, bx, by, width, 18, "rgba(10, 18, 26, 0.85)");
+  drawPx(target, bx + 2, by + 2, width - 4, 14, "rgba(240, 242, 220, 0.12)");
+  drawPx(target, bx - 2, by + 10, 4, 4, "rgba(10, 18, 26, 0.85)");
+  drawText(target, text, bx + 5, by + 12, "#f9f2d4", 10);
+}
+
+function drawHighlight(target, run) {
+  if (!run?.highlight) return;
+
+  const district = run.highlight.district;
+  if (district && DISTRICTS[district]) {
+    const d = DISTRICTS[district];
+    target.strokeStyle = "#ffe28f";
+    target.lineWidth = 2;
+    target.strokeRect(d.x * WORLD.tile, d.y * WORLD.tile, d.w * WORLD.tile, d.h * WORLD.tile);
   }
 
-  function placeMeetingRoom(room, district, districtName) {
-    let x1 = room.x1 + 2;
-    let y1 = room.y1 + 2;
+  if (run.highlight.filePath && run.fileStats.has(run.highlight.filePath)) {
+    const fileInfo = run.fileStats.get(run.highlight.filePath);
+    const slot = DISTRICT_SLOTS[fileInfo.district][fileInfo.slotIndex];
+    const x = slot.col * WORLD.tile;
+    const y = slot.row * WORLD.tile;
+    drawPx(target, x - 1, y - 1, 14, 14, "rgba(255, 226, 143, 0.4)");
+  }
+}
 
-    if (districtName === "Backend") x1 = room.x2 - 10;
-    if (districtName === "Infra") y1 = room.y2 - 8;
-    if (districtName === "Tests") {
-      x1 = room.x2 - 10;
-      y1 = room.y2 - 8;
-    }
+function drawHaze(target, run) {
+  if (!run || run.stuckScore <= 0.7) return;
 
-    const meeting = {
-      x1,
-      y1,
-      x2: x1 + 8,
-      y2: y1 + 6,
+  const alpha = clamp((run.stuckScore - 0.7) * 1.2, 0.05, 0.3);
+  drawPx(target, 0, 0, WORLD.width, WORLD.height, `rgba(120, 120, 110, ${alpha.toFixed(3)})`);
+
+  const signX = HQ.x * WORLD.tile + 60;
+  const signY = HQ.y * WORLD.tile + 16;
+  drawPx(target, signX, signY, 112, 20, "rgba(117, 62, 35, 0.9)");
+  drawPx(target, signX + 4, signY + 4, 104, 12, "rgba(225, 185, 122, 0.95)");
+  drawText(target, "CONSTRUCTION STALLED", signX + 6, signY + 13, "#2f1a0d", 9);
+}
+
+function drawRun(run, timeSec) {
+  ctx.clearRect(0, 0, WORLD.width, WORLD.height);
+  ctx.drawImage(staticLayer, 0, 0);
+  drawWaterShimmer(ctx, timeSec);
+
+  if (!run) return;
+
+  drawDistrictBuildings(ctx, run);
+  drawVehicles(ctx, run);
+  drawEffects(ctx, run);
+  drawNpc(ctx, NPCS.auntie, run.npcs.auntie);
+  drawNpc(ctx, NPCS.uncle, run.npcs.uncle);
+  drawNpc(ctx, NPCS.mrt, run.npcs.mrt);
+  drawHighlight(ctx, run);
+  drawHaze(ctx, run);
+}
+
+function renderRunList() {
+  runListEl.innerHTML = "";
+
+  for (const runId of state.runOrder) {
+    const run = state.runs.get(runId);
+    if (!run) continue;
+
+    const item = document.createElement("li");
+    item.className = `run-item${state.selectedRunId === runId ? " active" : ""}`;
+    item.dataset.runId = runId;
+
+    const top = document.createElement("div");
+    top.className = "run-top";
+
+    const title = document.createElement("span");
+    title.textContent = run.label;
+
+    const status = document.createElement("span");
+    status.className = `status-pill ${statusClass(run.status)}`;
+    status.textContent = run.status;
+
+    top.append(title, status);
+
+    const meta = document.createElement("div");
+    meta.className = "muted";
+    meta.textContent = `events=${run.rawEvents.length} files=${run.fileStats.size} errors=${run.errorCount}`;
+
+    item.append(top, meta);
+    runListEl.append(item);
+  }
+}
+
+function getSelectedRealRun() {
+  if (!state.selectedRunId) return null;
+  return state.runs.get(state.selectedRunId) || null;
+}
+
+function getActiveRunForView() {
+  if (state.replay.active && state.replay.previewRun) {
+    return state.replay.previewRun;
+  }
+  return getSelectedRealRun();
+}
+
+function selectedTimelineRecord(run) {
+  if (!run) return null;
+  const selectedId = state.timelineSelectionByRun.get(run.runId);
+  if (!selectedId) return null;
+  return run.timeline.find((record) => record.id === selectedId) || null;
+}
+
+function renderTimeline() {
+  timelineListEl.innerHTML = "";
+
+  const run = getActiveRunForView();
+  if (!run) return;
+
+  const entries = run.timeline.slice(-200).reverse();
+  const selectedId = state.timelineSelectionByRun.get(run.runId);
+
+  for (const record of entries) {
+    const li = document.createElement("li");
+    li.className = `timeline-item${record.id === selectedId ? " active" : ""}`;
+    li.dataset.timelineId = String(record.id);
+    li.dataset.runId = run.runId;
+
+    const derivedKinds = record.derived.map((item) => item.kind).join(", ");
+    li.innerHTML = `<div>${formatTime(record.ts)} | ${record.rawType}</div><div>${record.summary}</div><div class="derived">${derivedKinds}</div>`;
+
+    timelineListEl.append(li);
+  }
+}
+
+function renderScorecard() {
+  const run = getActiveRunForView();
+  if (!run) {
+    metricDurationEl.textContent = "0s";
+    metricToolCountEl.textContent = "0";
+    metricFileCountEl.textContent = "0";
+    metricErrorCountEl.textContent = "0";
+    metricSuccessCountEl.textContent = "0";
+    metricStuckEl.textContent = "0.00";
+    interventionTextEl.textContent = "No intervention needed yet.";
+    return;
+  }
+
+  const duration = (run.lastTs || run.createdAt) - (run.firstTs || run.createdAt);
+  metricDurationEl.textContent = formatDuration(duration);
+  metricToolCountEl.textContent = String(run.toolCount);
+  metricFileCountEl.textContent = String(run.fileCount);
+  metricErrorCountEl.textContent = String(run.errorCount);
+  metricSuccessCountEl.textContent = String(run.successCount);
+  metricStuckEl.textContent = run.stuckScore.toFixed(2);
+  interventionTextEl.textContent = run.intervention;
+
+  if (run.stuckScore > 0.7) {
+    stuckBannerEl.hidden = false;
+    stuckBannerEl.textContent = `Stuck score ${run.stuckScore.toFixed(2)} | ${run.stuckReason}`;
+  } else {
+    stuckBannerEl.hidden = true;
+  }
+}
+
+function renderInspector() {
+  const run = getActiveRunForView();
+  const record = selectedTimelineRecord(run);
+
+  if (!run || !record) {
+    inspectorSummaryEl.textContent = "Select a timeline item to inspect.";
+    inspectorRawEl.textContent = "";
+    return;
+  }
+
+  const derivedLine = record.derived.map((item) => item.kind).join(", ");
+  inspectorSummaryEl.textContent = `${record.summary} | district: ${record.district} | derived: ${derivedLine}`;
+  inspectorRawEl.textContent = JSON.stringify(record.rawEvent, null, 2);
+}
+
+function renderReplayUi() {
+  const sourceRun = state.replay.active
+    ? state.runs.get(state.replay.sourceRunId)
+    : getSelectedRealRun();
+
+  const max = sourceRun ? sourceRun.rawEvents.length : 0;
+  replaySliderEl.max = String(max);
+
+  if (state.replay.active) {
+    replaySliderEl.value = String(state.replay.index);
+    replayInfoEl.textContent = `Replay ${state.replay.index}/${max} at ${state.replay.speed}x`;
+    playPauseBtnEl.textContent = state.replay.playing ? "Pause" : "Play";
+  } else {
+    replaySliderEl.value = String(max);
+    replayInfoEl.textContent = "Replay: live mode";
+    playPauseBtnEl.textContent = "Play";
+  }
+}
+
+function renderWsStatus() {
+  wsStatusEl.textContent = `WS: ${state.ws.status}`;
+}
+
+function renderRunBadge() {
+  const run = getActiveRunForView();
+  if (!run) {
+    runBadgeEl.textContent = "run: none";
+    return;
+  }
+
+  if (state.replay.active && state.replay.sourceRunId) {
+    runBadgeEl.textContent = `run: ${run.label} (replay)`;
+    return;
+  }
+
+  runBadgeEl.textContent = `run: ${run.label}`;
+}
+
+function renderUi() {
+  renderWsStatus();
+  renderRunList();
+  renderTimeline();
+  renderScorecard();
+  renderInspector();
+  renderReplayUi();
+  renderRunBadge();
+}
+
+function handleTimelineClick(event) {
+  const li = event.target.closest(".timeline-item");
+  if (!li) return;
+
+  const timelineId = Number(li.dataset.timelineId);
+  const runId = li.dataset.runId;
+  if (!Number.isFinite(timelineId) || !runId) return;
+
+  const run = getActiveRunForView();
+  if (!run || run.runId !== runId) return;
+
+  state.timelineSelectionByRun.set(run.runId, timelineId);
+
+  const record = run.timeline.find((item) => item.id === timelineId);
+  if (record) {
+    run.highlight = {
+      district: record.district,
+      filePath: record.filePath,
+      until: nowMs() + 2800,
     };
-
-    for (let y = meeting.y1; y <= meeting.y2; y += 1) {
-      for (let x = meeting.x1; x <= meeting.x2; x += 1) {
-        setTile(x, y, "meeting_floor", district);
-      }
-    }
-
-    for (let x = meeting.x1; x <= meeting.x2; x += 1) {
-      setGlass(x, meeting.y1, district);
-      setGlass(x, meeting.y2, district);
-    }
-    for (let y = meeting.y1; y <= meeting.y2; y += 1) {
-      setGlass(meeting.x1, y, district);
-      setGlass(meeting.x2, y, district);
-    }
-
-    const doorX = Math.floor((meeting.x1 + meeting.x2) / 2);
-    const doorY = districtName === "Infra" || districtName === "Tests" ? meeting.y1 : meeting.y2;
-    setTile(doorX, doorY, "hall", district);
-    unblock(doorX, doorY);
-
-    return meeting;
   }
 
-  function canPlaceDesk(col, row) {
-    const footprint = [
-      { x: col, y: row },
-      { x: col + 1, y: row },
-      { x: col, y: row + 1 },
-      { x: col + 1, y: row + 1 },
-      { x: col + 1, y: row + 2 },
+  renderUi();
+}
+
+function handleRunListClick(event) {
+  const li = event.target.closest(".run-item");
+  if (!li) return;
+  const runId = li.dataset.runId;
+  if (!runId) return;
+  selectRun(runId);
+}
+
+function connectWebSocket() {
+  if (state.ws.reconnectTimer) {
+    clearTimeout(state.ws.reconnectTimer);
+    state.ws.reconnectTimer = null;
+  }
+
+  if (state.ws.socket) {
+    state.ws.manualReconnect = true;
+    state.ws.socket.close();
+    state.ws.socket = null;
+    state.ws.manualReconnect = false;
+  }
+
+  state.ws.status = "connecting";
+  renderWsStatus();
+
+  let socket;
+  try {
+    socket = new WebSocket(WS_URL);
+  } catch {
+    scheduleReconnect();
+    return;
+  }
+
+  state.ws.socket = socket;
+
+  socket.addEventListener("open", () => {
+    state.ws.status = "connected";
+    state.ws.attempts = 0;
+    renderWsStatus();
+  });
+
+  socket.addEventListener("message", (message) => {
+    const payload = typeof message.data === "string" ? message.data : "";
+    if (!payload) return;
+
+    try {
+      const rawEvent = JSON.parse(payload);
+      ingestRawEvent(rawEvent, { source: "ws", transient: true, allowGitDiff: true });
+    } catch {
+      ingestRawEvent(
+        {
+          type: "dashboard.parse.error",
+          ts: nowMs(),
+          message: "Invalid websocket payload",
+        },
+        { source: "dashboard", transient: true, allowGitDiff: false }
+      );
+    }
+  });
+
+  socket.addEventListener("error", () => {
+    state.ws.status = "error";
+    renderWsStatus();
+  });
+
+  socket.addEventListener("close", () => {
+    state.ws.socket = null;
+    if (state.ws.manualReconnect) return;
+    scheduleReconnect();
+  });
+}
+
+function scheduleReconnect() {
+  const delay = Math.min(10000, 500 * 2 ** state.ws.attempts);
+  state.ws.status = `reconnecting in ${(delay / 1000).toFixed(1)}s`;
+  renderWsStatus();
+  state.ws.attempts += 1;
+
+  state.ws.reconnectTimer = window.setTimeout(() => {
+    connectWebSocket();
+  }, delay);
+}
+
+async function setRepoOnHelper() {
+  const repoPath = repoPathInputEl.value.trim();
+  state.git.repoPath = repoPath;
+  state.git.useGitDiff = useGitDiffToggleEl.checked;
+  persistSettings();
+
+  if (!repoPath) {
+    helperStatusEl.textContent = "Helper: repo path required";
+    return;
+  }
+
+  try {
+    const response = await fetch(`${DIFF_HELPER_URL}/api/setRepo`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repoPath }),
+    });
+
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      helperStatusEl.textContent = `Helper: ${payload.error || "failed to set repo"}`;
+      return;
+    }
+
+    helperStatusEl.textContent = `Helper: repo set (${payload.baselineFiles} baseline files)`;
+  } catch {
+    helperStatusEl.textContent = "Helper: offline on :8790";
+  }
+}
+
+function setupEventHandlers() {
+  runListEl.addEventListener("click", handleRunListClick);
+  timelineListEl.addEventListener("click", handleTimelineClick);
+
+  newRunBtnEl.addEventListener("click", () => {
+    createManualRun();
+  });
+
+  reconnectBtnEl.addEventListener("click", () => {
+    state.ws.attempts = 0;
+    connectWebSocket();
+  });
+
+  setRepoBtnEl.addEventListener("click", () => {
+    setRepoOnHelper();
+  });
+
+  useGitDiffToggleEl.addEventListener("change", () => {
+    state.git.useGitDiff = useGitDiffToggleEl.checked;
+    persistSettings();
+  });
+
+  repoPathInputEl.addEventListener("change", () => {
+    state.git.repoPath = repoPathInputEl.value.trim();
+    persistSettings();
+  });
+
+  replaySpeedEl.addEventListener("change", () => {
+    const speed = Number(replaySpeedEl.value) || 1;
+    state.replay.speed = speed;
+    if (state.replay.playing) {
+      startReplayTimer();
+    }
+    renderReplayUi();
+  });
+
+  replaySliderEl.addEventListener("input", () => {
+    const sourceRun = getSelectedRealRun();
+    if (!sourceRun) return;
+
+    if (!state.replay.active || state.replay.sourceRunId !== sourceRun.runId) {
+      startReplay(sourceRun.runId);
+    }
+
+    state.replay.index = clamp(Number(replaySliderEl.value) || 0, 0, sourceRun.rawEvents.length);
+    rebuildReplayPreview();
+    renderUi();
+  });
+
+  playPauseBtnEl.addEventListener("click", () => {
+    const sourceRun = getSelectedRealRun();
+    if (!sourceRun) return;
+
+    if (!state.replay.active || state.replay.sourceRunId !== sourceRun.runId) {
+      startReplay(sourceRun.runId);
+    }
+
+    state.replay.playing = !state.replay.playing;
+    if (state.replay.playing) {
+      startReplayTimer();
+    } else {
+      stopReplayTimer();
+    }
+    renderReplayUi();
+  });
+
+  liveViewBtnEl.addEventListener("click", () => {
+    stopReplay();
+    renderUi();
+  });
+
+  exportRunBtnEl.addEventListener("click", () => {
+    exportSelectedRun();
+  });
+
+  importRunInputEl.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await importRunFromFile(file);
+    importRunInputEl.value = "";
+  });
+
+  simScoldedBtnEl.addEventListener("click", () => {
+    runScenario("scolded");
+  });
+
+  simLongtaskBtnEl.addEventListener("click", () => {
+    runScenario("longtask");
+  });
+
+  simAsleepBtnEl.addEventListener("click", () => {
+    runScenario("asleep");
+  });
+
+  simPackBtnEl.addEventListener("click", () => {
+    runSimulatorPack();
+  });
+}
+
+function startReplay(runId) {
+  const sourceRun = state.runs.get(runId);
+  if (!sourceRun) return;
+
+  stopReplayTimer();
+  state.replay.active = true;
+  state.replay.playing = false;
+  state.replay.sourceRunId = runId;
+  state.replay.index = 0;
+  state.replay.speed = Number(replaySpeedEl.value) || 1;
+  state.replay.previewRun = createRun({
+    runId: `replay:${runId}`,
+    agentId: `${sourceRun.agentId}:replay`,
+    label: sourceRun.label,
+  });
+
+  rebuildReplayPreview();
+}
+
+function rebuildReplayPreview() {
+  const sourceRun = state.runs.get(state.replay.sourceRunId);
+  if (!sourceRun) {
+    stopReplay();
+    return;
+  }
+
+  const preview = createRun({
+    runId: `replay:${sourceRun.runId}`,
+    agentId: `${sourceRun.agentId}:replay`,
+    label: sourceRun.label,
+  });
+
+  const max = clamp(state.replay.index, 0, sourceRun.rawEvents.length);
+  for (let i = 0; i < max; i += 1) {
+    integrateRawEvent(preview, sourceRun.rawEvents[i], {
+      source: "replay",
+      transient: true,
+      skipPersistence: true,
+      allowGitDiff: false,
+    });
+  }
+
+  state.replay.previewRun = preview;
+  evaluateStuck(preview);
+}
+
+function startReplayTimer() {
+  stopReplayTimer();
+
+  state.replay.timer = window.setInterval(() => {
+    const sourceRun = state.runs.get(state.replay.sourceRunId);
+    if (!sourceRun) {
+      stopReplay();
+      renderUi();
+      return;
+    }
+
+    const next = Math.min(sourceRun.rawEvents.length, state.replay.index + state.replay.speed);
+    state.replay.index = next;
+    rebuildReplayPreview();
+
+    if (state.replay.index >= sourceRun.rawEvents.length) {
+      state.replay.playing = false;
+      stopReplayTimer();
+    }
+
+    renderUi();
+  }, 340);
+}
+
+function stopReplayTimer() {
+  if (state.replay.timer) {
+    clearInterval(state.replay.timer);
+    state.replay.timer = null;
+  }
+}
+
+function stopReplay() {
+  stopReplayTimer();
+  state.replay.active = false;
+  state.replay.playing = false;
+  state.replay.sourceRunId = null;
+  state.replay.previewRun = null;
+  state.replay.index = 0;
+}
+
+function exportSelectedRun() {
+  const run = getSelectedRealRun();
+  if (!run) return;
+
+  const lines = run.rawEvents.map((event) => JSON.stringify(event)).join("\n");
+  const blob = new Blob([lines], { type: "application/jsonl" });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${run.label.replace(/[^a-z0-9:_-]/gi, "_")}.jsonl`;
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
+async function importRunFromFile(file) {
+  const text = await file.text();
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  const events = [];
+
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && typeof parsed === "object") {
+        events.push(parsed);
+      }
+    } catch {
+      // Ignore non JSON lines.
+    }
+  }
+
+  if (events.length === 0) return;
+
+  state.manualRunCounter += 1;
+  const runId = `manual:${state.manualRunCounter}`;
+  ensureRun(runId, {
+    manual: true,
+    agentId: `codex:run:${state.manualRunCounter}`,
+    label: `codex:run:${state.manualRunCounter}`,
+  });
+
+  for (const event of events) {
+    ingestRawEvent(event, {
+      source: "import",
+      forceRunId: runId,
+      transient: true,
+      allowGitDiff: false,
+    });
+  }
+
+  state.activeManualRunId = runId;
+  state.selectedRunId = runId;
+  queuePersistence();
+  renderUi();
+}
+
+function scenarioEvents(name) {
+  if (name === "scolded") {
+    return [
+      { type: "turn.started", run_id: "sim-scolded", message: "Start fixing lint in frontend" },
+      { type: "tool.exec", run_id: "sim-scolded", tool: "Bash", message: "npm test -- ui", path: "ui/navbar.tsx" },
+      { type: "tool.failed", run_id: "sim-scolded", message: "same error: expected 2 got 3", path: "tests/ui/navbar.test.ts" },
+      { type: "tool.exec", run_id: "sim-scolded", tool: "Edit", message: "patch component", path: "ui/navbar.tsx" },
+      { type: "tool.failed", run_id: "sim-scolded", message: "same error: expected 2 got 3", path: "tests/ui/navbar.test.ts" },
+      { type: "tool.exec", run_id: "sim-scolded", tool: "Read", message: "read logs", path: "logs/latest.md" },
+      { type: "turn.completed", run_id: "sim-scolded", message: "stopped after repeated failure" },
     ];
-
-    for (const cell of footprint) {
-      if (!inBounds(cell.x, cell.y)) return false;
-      if (tileKind[cell.y][cell.x] !== "office_floor") return false;
-      if (blockedTiles.has(key(cell.x, cell.y))) return false;
-    }
-
-    return true;
   }
 
-  for (const [district, bounds] of Object.entries(DISTRICTS)) {
-    for (let y = bounds.y1; y <= bounds.y2; y += 1) {
-      for (let x = bounds.x1; x <= bounds.x2; x += 1) {
-        setTile(x, y, "outside", district);
-      }
-    }
-
-    const room = {
-      x1: bounds.x1 + 2,
-      y1: bounds.y1 + 2,
-      x2: bounds.x2 - 2,
-      y2: bounds.y2 - 2,
-    };
-
-    for (let y = room.y1 + 1; y <= room.y2 - 1; y += 1) {
-      for (let x = room.x1 + 1; x <= room.x2 - 1; x += 1) {
-        setTile(x, y, "office_floor", district);
-      }
-    }
-
-    for (let x = room.x1; x <= room.x2; x += 1) {
-      setWall(x, room.y1, district);
-      setWall(x, room.y2, district);
-    }
-    for (let y = room.y1; y <= room.y2; y += 1) {
-      setWall(room.x1, y, district);
-      setWall(room.x2, y, district);
-    }
-
-    const meeting = placeMeetingRoom(room, district, district);
-
-    const door = pickDoorTowardsHQ(room);
-    setTile(door.x, door.y, "hall", district);
-    unblock(door.x, door.y);
-    setTile(door.insideX, door.insideY, "hall", district);
-    unblock(door.insideX, door.insideY);
-
-    const roomCenterX = Math.floor((room.x1 + room.x2) / 2);
-    const roomCenterY = Math.floor((room.y1 + room.y2) / 2);
-    carveHallPath(door.insideX, door.insideY, roomCenterX, roomCenterY, district);
-
-    carveHallPath(HQ.x, HQ.y, door.x, door.y, district);
-
-    decor.push({ type: "plant", col: room.x1 + 1, row: room.y1 + 1 });
-    decor.push({ type: "plant", col: room.x2 - 1, row: room.y1 + 1 });
-    decor.push({ type: "bookshelf", col: room.x1 + 1, row: room.y2 - 1 });
-    decor.push({ type: "coffee", col: room.x2 - 1, row: room.y2 - 1 });
-
-    block(room.x1 + 1, room.y1 + 1);
-    block(room.x2 - 1, room.y1 + 1);
-    block(room.x1 + 1, room.y2 - 1);
-    block(room.x2 - 1, room.y2 - 1);
-
-    let seatId = 0;
-    const corridorX = roomCenterX;
-    const corridorY = roomCenterY;
-
-    for (let y = room.y1 + 3; y <= room.y2 - 5; y += 6) {
-      for (let x = room.x1 + 3; x <= room.x2 - 5; x += 7) {
-        if (Math.abs(x - corridorX) <= 2 || Math.abs(y - corridorY) <= 1) continue;
-        if (x >= meeting.x1 - 1 && x <= meeting.x2 + 1 && y >= meeting.y1 - 2 && y <= meeting.y2 + 1) continue;
-        if (!canPlaceDesk(x, y)) continue;
-
-        const seatCol = x + 1;
-        const seatRow = y + 2;
-
-        seats[district].push({
-          id: `${district}-${seatId}`,
-          district,
-          deskCol: x,
-          deskRow: y,
-          seatCol,
-          seatRow,
-          facingDir: Direction.UP,
-        });
-        seatId += 1;
-
-        block(x, y);
-        block(x + 1, y);
-        block(x, y + 1);
-        block(x + 1, y + 1);
-        block(seatCol, seatRow);
-      }
-    }
+  if (name === "longtask") {
+    return [
+      { type: "turn.started", run_id: "sim-longtask", message: "Refactor infra pipeline" },
+      { type: "tool.run", run_id: "sim-longtask", tool: "Read", message: "scan terraform", path: "infra/terraform/main.tf" },
+      { type: "tool.run", run_id: "sim-longtask", tool: "Bash", message: "terraform plan", path: "infra/terraform/main.tf" },
+      { type: "tool.run", run_id: "sim-longtask", tool: "Read", message: "check deploy logs", path: "infra/deploy.yaml" },
+      { type: "tool.run", run_id: "sim-longtask", tool: "Bash", message: "kubectl describe pod" },
+      { type: "tool.run", run_id: "sim-longtask", tool: "Read", message: "retry and inspect" },
+      { type: "tool.run", run_id: "sim-longtask", tool: "Edit", message: "small update", path: "infra/deploy.yaml" },
+      { type: "item.succeeded", run_id: "sim-longtask", message: "plan validated", path: "infra/deploy.yaml" },
+      { type: "turn.completed", run_id: "sim-longtask", message: "long task wrapped" },
+    ];
   }
 
-  for (let y = HQ.y - 1; y <= HQ.y + 1; y += 1) {
-    for (let x = HQ.x - 1; x <= HQ.x + 1; x += 1) {
-      setTile(x, y, "lobby", "Tests");
-      unblock(x, y);
-    }
-  }
-
-  unblock(HQ.x, HQ.y);
-
-  return {
-    tileKind,
-    tileDistrict,
-    blockedTiles,
-    decor,
-    seats,
-  };
+  return [
+    { type: "turn.started", run_id: "sim-asleep", message: "Waiting for instruction" },
+    { type: "tool.run", run_id: "sim-asleep", tool: "Read", message: "Open task context", path: "README.md" },
+    { type: "note", run_id: "sim-asleep", message: "No next action provided" },
+    { type: "note", run_id: "sim-asleep", message: "Agent idle" },
+    { type: "turn.completed", run_id: "sim-asleep", message: "Paused" },
+  ];
 }
 
-function connectDemoHelpers() {
-  let demoTimer = null;
-
-  function dispatch(evt) {
-    window.dispatchAgentEvent(evt);
+function clearSimulatorTimers() {
+  for (const timer of state.simulatorTimers) {
+    clearInterval(timer);
   }
-
-  const api = {
-    help() {
-      console.log("Agent Viz demo commands:");
-      console.log('window.dispatchAgentEvent({ type: "item.completed", path: "tests/unit/foo.test.ts" });');
-      console.log('window.dispatchAgentEvent({ type: "error", message: "failed", path: "server/api.ts" });');
-      console.log("window.agentVizDemo.complete('src/components/button.tsx');");
-      console.log("window.agentVizDemo.error('lint failed', 'tests/unit/foo.test.ts');");
-      console.log("window.agentVizDemo.tool('Read', 'README.md');");
-      console.log("window.agentVizDemo.play(); // scripted 1-minute showcase");
-      console.log("window.agentVizDemo.stop();");
-    },
-    dispatch,
-    complete(path = "tests/unit/foo.test.ts") {
-      dispatch({ type: "item.completed", path });
-    },
-    error(message = "task failed", path = "src/server/index.ts") {
-      dispatch({ type: "error", message, path });
-    },
-    tool(tool = "Read", path = "src/app.ts") {
-      dispatch({ type: "tool_call", tool, path });
-    },
-    burst() {
-      dispatch({ type: "tool_call", tool: "Read", path: "src/app.ts" });
-      dispatch({ type: "item.completed", path: "src/app.ts" });
-      dispatch({ type: "tool_call", tool: "Edit", path: "src/components/panel.tsx" });
-      dispatch({ type: "item.completed", path: "src/components/panel.tsx" });
-      dispatch({ type: "tool_call", tool: "Read", path: "tests/unit/foo.test.ts" });
-      dispatch({ type: "item.completed", path: "tests/unit/foo.test.ts" });
-      dispatch({ type: "error", message: "timeout", path: "infra/deploy.yaml" });
-    },
-    play() {
-      api.stop();
-      const script = [
-        { type: "tool_call", tool: "Read", path: "README.md" },
-        { type: "item.completed", path: "README.md" },
-        { type: "tool_call", tool: "Edit", path: "src/frontend/dashboard.tsx" },
-        { type: "item.completed", path: "src/frontend/dashboard.tsx" },
-        { type: "tool_call", tool: "Bash", path: "package.json" },
-        { type: "item.completed", path: "package.json" },
-        { type: "tool_call", tool: "Read", path: "infra/terraform/main.tf" },
-        { type: "error", message: "terraform plan failed", path: "infra/terraform/main.tf" },
-        { type: "tool_call", tool: "Read", path: "tests/unit/auth.test.ts" },
-        { type: "item.completed", path: "tests/unit/auth.test.ts" },
-        { type: "tool_call", tool: "Edit", path: "server/routes/api.ts" },
-        { type: "item.completed", path: "server/routes/api.ts" },
-      ];
-
-      let i = 0;
-      demoTimer = setInterval(() => {
-        dispatch(script[i]);
-        i += 1;
-        if (i >= script.length) {
-          api.stop();
-        }
-      }, 1100);
-    },
-    stop() {
-      if (demoTimer) {
-        clearInterval(demoTimer);
-        demoTimer = null;
-      }
-    },
-  };
-
-  window.agentVizDemo = api;
-  window.showDispatchExamples = api.help;
+  state.simulatorTimers.length = 0;
 }
 
-let previous = performance.now();
+function runScenario(name) {
+  const events = scenarioEvents(name);
+  let index = 0;
+
+  const timer = window.setInterval(() => {
+    const event = events[index];
+    if (!event) {
+      clearInterval(timer);
+      return;
+    }
+
+    ingestRawEvent(
+      {
+        ...event,
+        ts: nowMs(),
+      },
+      { source: "sim", transient: true, allowGitDiff: false }
+    );
+
+    if (event.run_id) {
+      const runId = `explicit:${sanitizeRunIdentity(event.run_id)}`;
+      if (state.runs.has(runId)) {
+        state.selectedRunId = runId;
+      }
+    }
+
+    index += 1;
+  }, 900);
+
+  state.simulatorTimers.push(timer);
+}
+
+function runSimulatorPack() {
+  clearSimulatorTimers();
+
+  runScenario("scolded");
+  window.setTimeout(() => runScenario("longtask"), 400);
+  window.setTimeout(() => runScenario("asleep"), 800);
+}
+
+let previousFrameTime = performance.now();
 
 function frame(now) {
-  const dt = Math.min(0.05, (now - previous) / 1000);
-  previous = now;
+  const dt = clamp((now - previousFrameTime) / 1000, 0, 0.05);
+  previousFrameTime = now;
 
-  updateAgents(dt);
-  updateVehicles(dt);
-  updateEffects(dt);
-  render();
-  updateHud();
+  for (const run of state.runs.values()) {
+    updateRunAnimations(run, dt);
+    evaluateStuck(run, nowMs());
+  }
 
+  if (state.replay.active && state.replay.previewRun) {
+    updateRunAnimations(state.replay.previewRun, dt);
+    evaluateStuck(state.replay.previewRun, nowMs());
+  }
+
+  drawRun(getActiveRunForView(), now / 1000);
   requestAnimationFrame(frame);
 }
 
-window.dispatchAgentEvent = (evt) => {
-  if (!evt || typeof evt !== "object") return;
-  handleCodexEvent(evt);
+function boot() {
+  ensureMainRun();
+  restoreSettings();
+  restoreRunsFromStorage();
+  setupEventHandlers();
+  connectWebSocket();
+
+  state.replay.speed = Number(replaySpeedEl.value) || 1;
+
+  renderUi();
+  requestAnimationFrame(frame);
+}
+
+window.dispatchAgentEvent = (event) => {
+  ingestRawEvent(event, { source: "manual", transient: true, allowGitDiff: false });
 };
 
-connectDemoHelpers();
-addLogLine("Tip: window.agentVizDemo.help() in DevTools console");
-connectWebSocket();
-updateHud();
-requestAnimationFrame(frame);
+window.agentVizDemo = {
+  runScenario,
+  runSimulatorPack,
+  dispatch: (event) => window.dispatchAgentEvent(event),
+};
+
+boot();

@@ -1,23 +1,72 @@
 # Project Soul
 
-## What This Project Is
+## Core Principles
 
-Agent Visualiser MVP is a live operational map for coding agents. It turns raw event streams into a city metaphor so humans can quickly understand where activity, risk, and progress are happening during a coding run.
+- Observability first: every animation maps to a derived event.
+- Resilience over schema lock-in: unknown event shapes should still produce meaningful visuals.
+- Demo reliability: simulator mode and replay controls must always be available.
+- Actionable insight: scorecard and stuck interventions should guide operator decisions.
 
-## Design Principles
+## Singapore Pixel Theme
 
-- Observability first: every visual element should correspond to an event.
-- Trust through simplicity: clear heuristics, minimal hidden logic.
-- Replay friendly architecture: event handling is deterministic where possible.
-- Human tone: the interface should feel calm, legible, and grounded.
-- City metaphor: districts represent areas of work, HQ is orchestration.
+Visual anchors:
 
-## MVP Non Goals
+- Merlion HQ at center
+- Marina Bay water tiles
+- Districts: CBD, Bugis, Jurong, Changi
 
-What we will not do in MVP:
-- No A* routing or advanced pathfinding.
-- No spritesheets or custom art assets.
-- No camera panning, zoom, or world streaming.
-- No framework migration or heavy build tooling.
+District semantics:
 
-The MVP intentionally stays rectangle based and static canvas so the team can ship quickly and iterate tomorrow.
+- `Bugis` for frontend paths
+- `Jurong` for infra paths
+- `Changi` for tests paths
+- `CBD` for everything else
+
+Animation language:
+
+- Tool activity sends vehicles from HQ
+- File changes grow district buildings by touch level
+- Errors trigger red beacon and smoke
+- Success triggers fireworks near Marina
+- Stuck score high adds haze and construction stalled sign
+
+## Character Guidance
+
+### Auntie Debug
+
+Trigger:
+
+- repeated error signatures
+- high stuck score
+
+Lines:
+
+- "Aiya, same error again."
+- "Show logs first lah."
+- "Scope too big, break down can?"
+
+### Uncle Ops
+
+Trigger:
+
+- infra-heavy failures
+
+Line:
+
+- "Check env and configs."
+
+### MRT Controller
+
+Trigger:
+
+- sustained tool activity burst
+
+Line:
+
+- "Train running, agent busy."
+
+## UX Tone
+
+- Fast read in under 5 seconds
+- Dev-friendly humor without noise
+- Keep labels explicit so judges can follow quickly

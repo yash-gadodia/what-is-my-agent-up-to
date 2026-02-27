@@ -1,73 +1,97 @@
-# Agent Visualiser MVP
+# Codex Agent Viz SG
 
-Minimal browser visualiser for live Codex CLI sessions. A small relay process runs `codex exec --json`, streams events over WebSocket, and a canvas app renders a pixel city where activity appears as moving vehicles, building growth, and warning/success effects.
+Canvas dashboard for live Codex JSON events.
 
-## What this is
+It listens to `ws://localhost:8787`, maps unknown or changing Codex event taxonomies into stable visual signals, and renders a Singapore-themed pixel city that shows activity, code touch points, failures, success, and stuck loops.
 
-This project helps people observe agentic coding in real time:
-- WebSocket relay for Codex JSONL events
-- Static frontend with rectangle only pixel city visuals
-- Event to district mapping that is explicit and easy to tune
+## What This Is
 
-## 1 Hour MVP Plan
+- Real-time visualiser for Codex JSON mode events
+- Multi-run lanes with agent status: idle, working, error, done
+- Replay, scrub, import, and export for demos
+- Simulator pack for guaranteed stage flow
 
-1. Install dependencies.
-2. Start static frontend server.
-3. Start relay against a target repo and prompt.
-4. Open browser and watch the city respond to live events.
-5. Tune mapping rules in `public/app.js` for your repo structure.
-
-## Quick Start
+## How To Run
 
 ```bash
 npm install
 npm run dev
 ```
 
-In a second terminal:
-
-```bash
-npm run relay -- --repo /ABS/PATH/TO/OpenClaw --prompt "Run tests and fix the first failure. Explain each step briefly."
-```
-
 Open:
+
 - [http://localhost:8788](http://localhost:8788)
 
-## Run Against OpenClaw
-
-Example:
+In another terminal, run relay:
 
 ```bash
-npm run relay -- --repo /Users/yash/Documents/Voltade/Code/OpenClaw --prompt "Run test suite, fix the first failing test, and stop after one fix."
+node relay.mjs --repo /abs/path/to/target/repo --prompt "Run tests and fix the first failure"
 ```
 
-Expected behavior:
-- `tool_call` and turn start activity spawn vehicles from HQ
-- file paths create and upgrade buildings
-- failures create red beacon flashes
-- successes create green pulses
+Optional git diff helper (for ground truth changed files):
 
-## File Map
+```bash
+npm run helper
+```
 
-- `relay.mjs`: Runs Codex CLI and forwards JSON events over WebSocket.
-- `server.mjs`: Minimal static server for `public/` at `http://localhost:8788`.
-- `public/app.js`: World state, event heuristics, animation loop, and rendering.
-- `docs/OPENAI.md`: Codex integration details.
-- `docs/SOUL.md`: Design intent and constraints.
-- `docs/HACKATHON.md`: Problem statement and judging pitch.
+Then in the UI:
 
-## Troubleshooting Checklist
+1. Set `Repo path`
+2. Enable `Use git diff`
+3. Click `Set Repo`
 
-- `codex` command not found: install Codex CLI and verify `codex --help` works.
-- Browser shows `WS: disconnected`: ensure relay is running on port `8787`.
-- Blank page: ensure `npm run dev` is active on port `8788`.
-- No events arriving: verify relay repo path exists and prompt is passed.
-- JSON parse warnings are normal: relay ignores malformed non JSON lines.
+## Demo Script For Judges
 
-## Tomorrow Improvements
+1. Start UI with `npm run dev`.
+2. Start relay with a coding prompt in a target repo.
+3. Show live websocket status and runs list.
+4. Explain city mapping:
+   - `CBD` for general files
+   - `Bugis` for frontend paths
+   - `Jurong` for infra paths
+   - `Changi` for tests
+5. Trigger activity and narrate:
+   - tool activity spawns vehicles from Merlion HQ
+   - file changes upgrade district buildings
+   - errors trigger red beacon and smoke
+   - success triggers fireworks near Marina Bay
+6. Show right panel scorecard and stuck score interventions.
+7. Open timeline item and inspect raw JSON plus derived meaning.
+8. Switch to replay, scrub slider, and speed up at `2x` or `5x`.
+9. Run `Simulator Pack` for `scolded`, `longtask`, `asleep` flows.
 
-1. Add session recording and replay timeline controls.
-2. Add event filters, speed controls, and district toggles.
-3. Support richer event taxonomy from Codex JSON schema variants.
-4. Add path overlays showing multi hop vehicle journeys.
-5. Add deterministic replay fixtures for regression testing.
+## Simulator Mode
+
+Built-in buttons generate plausible Codex-like events for:
+
+- `scolded`
+- `longtask`
+- `asleep`
+
+This is useful when websocket data is unavailable or for a fixed-time stage demo.
+
+## Troubleshooting
+
+- WebSocket stuck on reconnecting
+  - confirm relay is running on `ws://localhost:8787`
+  - click `Reconnect WS`
+- Events arrive but city does not react
+  - inspect timeline and raw JSON in inspector
+  - mapping is heuristic and can be tuned in `/public/mapping.js`
+- Missing file paths in visuals
+  - event may not contain a path and regex may not match
+  - enable helper and `Use git diff` for repository ground truth
+- Helper offline
+  - start `npm run helper`
+  - confirm port `8790` is free
+
+## Files
+
+- `/relay.mjs` Codex JSON relay to websocket
+- `/server.mjs` static server for `/public` on `8788`
+- `/helper.mjs` optional git diff helper on `8790`
+- `/public/mapping.js` raw Codex event to derived visual events
+- `/public/app.js` runtime, city rendering, lanes, replay, simulator
+- `/docs/HACKATHON.md` judge framing and eval angle
+- `/docs/SOUL.md` design principles and theme guidance
+- `/docs/OPENAI.md` Codex JSON integration strategy

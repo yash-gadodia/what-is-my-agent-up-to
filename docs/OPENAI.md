@@ -1,53 +1,60 @@
-# OpenAI and Codex Integration
+# Codex JSON Integration Notes
 
-## Why `codex exec --json`
+## Current Input Contract
 
-`codex exec --json` gives line delimited JSON output that is machine friendly and streamable. This enables a thin relay that forwards events in real time to a browser over WebSocket without complex parsing dependencies.
+This project consumes Codex JSON events streamed over websocket:
 
-## Relay Flow
+- source: `relay.mjs`
+- websocket: `ws://localhost:8787`
+- relay command: `codex exec --json <prompt>`
 
-1. Relay starts a WebSocket server on `ws://localhost:8787`.
-2. Relay spawns:
+No runtime-specific APIs are used.
 
-```bash
-codex exec --json <prompt>
-```
+## Relay Behavior
 
-with working directory set to the target repo.
+`relay.mjs`:
 
-3. Stdout is treated as JSONL.
-4. Each line is parsed with `JSON.parse` in a try/catch.
-5. Parsed objects are broadcast to all connected browser clients.
-6. Stderr is also forwarded as:
+1. Spawns Codex CLI in target repo
+2. Reads stdout as JSONL
+3. Parses line by line with safe `JSON.parse`
+4. Broadcasts parsed events to websocket clients
+5. Forwards stderr and lifecycle events (`relay.started`, `codex.exit`)
 
-```json
-{ "type": "codex.stderr", "ts": 0, "text": "..." }
-```
+## Frontend Mapping Strategy
 
-7. Relay lifecycle events are emitted:
-- `relay.started`
-- `codex.exit`
+Raw events can vary by taxonomy and nesting, so `/public/mapping.js` creates stable derived events:
 
-## JSONL Parsing Notes
+- `step.started`
+- `step.ended`
+- `tool.activity`
+- `file.changed`
+- `error`
+- `success`
+- `note`
 
-- Parsing is best effort and non fatal.
-- Malformed lines are ignored so the relay stays alive.
-- Any trailing buffered line is parsed once on process exit.
+Key mapping choices:
 
-## Event Mapping Strategy
+- keeps original raw type string from `type/event/name/kind/status`
+- heuristic tool activity when type includes `turn.started`, `tool`, `exec`, or `run`
+- heuristic errors for `error`, `failed`, `exception`, `timeout`
+- heuristic success for `completed`, `succeeded`, `passed`, `success`
+- file path extraction from direct fields, arrays, and regex fallback
 
-`public/app.js` contains the event to visual mapping logic.
+## Optional Ground Truth Diff
 
-Primary hooks to adjust:
-- `chooseDistrictFromPath(filePath)`
-- `chooseDistrictFromEvent(evt, fallback)`
-- `isToolCallEvent(evt, eventType)`
-- `isErrorEvent(evt, eventType)`
-- `isSuccessEvent(evt, eventType)`
-- `FILE_REGEX` for file path extraction
+`helper.mjs` exposes local git diff APIs:
 
-Current behavior:
-- Tool and turn started style events spawn vehicles from HQ.
-- File paths map to district tiles and grow buildings by touch count.
-- Error and failed signals create red beacon effects.
-- Completed and passed signals create green pulse effects.
+- `POST /api/setRepo { repoPath }`
+- `GET /api/diff`
+
+The UI can poll this helper around step boundaries to emit additional `file.changed` signals based on real repository diffs.
+
+## Future Runtime Connectors
+
+Planned expansion path:
+
+- keep the same derived event contract
+- add adapters for richer agent runtimes
+- route adapters into the same visual pipeline
+
+This keeps the dashboard stable while connectors evolve independently.

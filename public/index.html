@@ -3,20 +3,105 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agent Visualiser MVP</title>
+    <title>Codex Agent Viz SG</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="app-shell">
-      <canvas id="cityCanvas" width="1280" height="720"></canvas>
-      <section class="hud" aria-live="polite">
-        <h1>Agent Visualiser MVP</h1>
-        <p id="wsStatus">WS: connecting</p>
-        <p id="metrics">buildings=0 vehicles=0 effects=0</p>
-        <p id="lastType">last event: none</p>
-        <pre id="logLines"></pre>
+    <main class="layout">
+      <aside class="panel panel-left" aria-label="Runs and connection">
+        <h1>Codex Agent Viz SG</h1>
+        <p id="wsStatus" class="chip">WS: connecting</p>
+        <div class="control-group">
+          <label class="field">
+            Repo path
+            <input id="repoPathInput" type="text" placeholder="/abs/path/to/repo" spellcheck="false" />
+          </label>
+          <label class="toggle">
+            <input id="useGitDiffToggle" type="checkbox" />
+            Use git diff
+          </label>
+          <div class="row">
+            <button id="setRepoBtn" type="button">Set Repo</button>
+            <button id="reconnectBtn" type="button">Reconnect WS</button>
+          </div>
+          <p id="helperStatus" class="muted">Helper: optional</p>
+        </div>
+
+        <div class="control-group">
+          <div class="row">
+            <button id="newRunBtn" type="button">New Run</button>
+            <button id="simPackBtn" type="button">Simulator Pack</button>
+          </div>
+          <div class="row">
+            <button id="simScoldedBtn" type="button">Sim scolded</button>
+            <button id="simLongtaskBtn" type="button">Sim longtask</button>
+            <button id="simAsleepBtn" type="button">Sim asleep</button>
+          </div>
+        </div>
+
+        <section>
+          <h2>Runs and agents</h2>
+          <ul id="runList" class="run-list"></ul>
+        </section>
+      </aside>
+
+      <section class="panel panel-center" aria-label="City and timeline">
+        <div class="canvas-wrap">
+          <canvas id="cityCanvas" width="1280" height="720"></canvas>
+          <p id="stuckBanner" class="stuck-banner" hidden>Stuck signal</p>
+          <p id="runBadge" class="run-badge">run: none</p>
+        </div>
+
+        <section class="replay-bar" aria-label="Replay controls">
+          <div class="row replay-row">
+            <button id="playPauseBtn" type="button">Play</button>
+            <button id="liveViewBtn" type="button">Live View</button>
+            <label class="field-inline">
+              Speed
+              <select id="replaySpeed">
+                <option value="1">1x</option>
+                <option value="2">2x</option>
+                <option value="5">5x</option>
+              </select>
+            </label>
+            <button id="exportRunBtn" type="button">Export JSONL</button>
+            <label class="import-label" for="importRunInput">Import JSONL</label>
+            <input id="importRunInput" type="file" accept=".jsonl,.txt,.json" />
+          </div>
+          <input id="replaySlider" type="range" min="0" max="0" value="0" />
+          <p id="replayInfo" class="muted">Replay: ready</p>
+        </section>
+
+        <section class="timeline-panel">
+          <h2>Timeline (last 200)</h2>
+          <ul id="timelineList"></ul>
+        </section>
       </section>
+
+      <aside class="panel panel-right" aria-label="Run insights">
+        <h2>Run scorecard</h2>
+        <dl id="scorecard" class="scorecard">
+          <div><dt>Duration</dt><dd id="metricDuration">0s</dd></div>
+          <div><dt>Tool activity</dt><dd id="metricToolCount">0</dd></div>
+          <div><dt>File changed</dt><dd id="metricFileCount">0</dd></div>
+          <div><dt>Error</dt><dd id="metricErrorCount">0</dd></div>
+          <div><dt>Success</dt><dd id="metricSuccessCount">0</dd></div>
+          <div><dt>Stuck score</dt><dd id="metricStuck">0.00</dd></div>
+        </dl>
+
+        <section class="insight-block">
+          <h3>Suggested intervention</h3>
+          <p id="interventionText" class="muted">No intervention needed yet.</p>
+        </section>
+
+        <section class="insight-block">
+          <h3>Inspector</h3>
+          <p id="inspectorSummary" class="muted">Select a timeline item to inspect.</p>
+          <pre id="inspectorRaw"></pre>
+        </section>
+      </aside>
     </main>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>

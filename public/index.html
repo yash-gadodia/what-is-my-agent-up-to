@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Visualiser MVP</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <canvas id="cityCanvas" width="1280" height="720"></canvas>
+      <section class="hud" aria-live="polite">
+        <h1>Agent Visualiser MVP</h1>
+        <p id="wsStatus">WS: connecting</p>
+        <p id="metrics">buildings=0 vehicles=0 effects=0</p>
+        <p id="lastType">last event: none</p>
+        <pre id="logLines"></pre>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

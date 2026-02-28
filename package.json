@@ -10,6 +10,7 @@
     "swarm:continuous": "node swarm.mjs --repo . --count 4 --port 8899 --stagger-ms 300 --continuous true --restart-delay-ms 1500 --prompt \"Map the top 5 technical risks in this repo and suggest mitigations.\" --prompt \"Run npm scripts and identify reliability gaps in local dev flow.\" --prompt \"Review websocket event mapping logic and propose concrete improvements.\" --prompt \"Find demo-breaking failure modes and suggest fail-fast checks.\"",
     "helper": "node helper.mjs",
     "start": "npm run dev",
+    "test": "node --test",
     "lint": "echo \"No lint configured for MVP\""
   },
   "keywords": [

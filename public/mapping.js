@@ -1,4 +1,4 @@
-const FILE_REGEX = /([\w./-]+\.(?:ts|js|jsx|tsx|py|go|java|rs|md|json|yml|yaml|toml|sql))/gi;
+const FILE_REGEX = /([\w./-]+\.(?:ts|js|mjs|cjs|jsx|tsx|py|go|java|rs|md|json|yml|yaml|toml|sql))/gi;
 
 const TYPE_KEYS = ["method", "type", "event", "name", "kind", "status"];
 const TIME_KEYS = [

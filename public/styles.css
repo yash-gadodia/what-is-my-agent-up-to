@@ -315,16 +315,19 @@ body.colorblind {
   grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
   gap: 10px;
   overflow: auto;
+  align-content: start;
 }
 
 .pane-card {
   border: 1px solid rgba(76, 128, 169, 0.28);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.95);
-  padding: 8px;
-  display: grid;
-  gap: 7px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(245, 250, 255, 0.95));
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   cursor: pointer;
+  min-height: 220px;
 }
 
 .pane-card.active {
@@ -340,8 +343,9 @@ body.colorblind {
 }
 
 .pane-title {
-  font-size: 12px;
-  color: #e6f3ff;
+  font-size: 13px;
+  font-weight: 700;
+  color: #17344e;
 }
 
 .pane-meta {
@@ -349,12 +353,13 @@ body.colorblind {
   flex-wrap: wrap;
   gap: 6px;
   font-size: 11px;
-  color: #bdd2e2;
+  color: #466680;
 }
 
 .pane-step {
   font-size: 12px;
-  color: #f3f8ec;
+  line-height: 1.45;
+  color: #183c59;
 }
 
 .pane-log {
@@ -366,6 +371,7 @@ body.colorblind {
   overflow: auto;
   display: grid;
   gap: 4px;
+  margin-top: auto;
 }
 
 .pane-log-line {

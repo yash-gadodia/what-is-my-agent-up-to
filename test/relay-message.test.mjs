@@ -34,6 +34,7 @@ test("parseAppServerPayload accepts JSON object payload", () => {
   const result = parseAppServerPayload('{"jsonrpc":"2.0","method":"turn/completed"}');
   assert.equal(result.ok, true);
   assert.equal(result.message.method, "turn/completed");
+  assert.equal(result.messages.length, 1);
 });
 
 test("parseAppServerPayload accepts ArrayBuffer and Buffer[] websocket payloads", () => {
@@ -48,6 +49,22 @@ test("parseAppServerPayload accepts ArrayBuffer and Buffer[] websocket payloads"
   const fromChunkList = parseAppServerPayload(asChunkList);
   assert.equal(fromChunkList.ok, true);
   assert.equal(fromChunkList.message.method, "turn/completed");
+});
+
+test("parseAppServerPayload accepts JSON-RPC batch payloads", () => {
+  const result = parseAppServerPayload(
+    '[{"jsonrpc":"2.0","id":1,"result":{"ok":true}},{"jsonrpc":"2.0","method":"turn/completed"}]'
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.messages.length, 2);
+  assert.equal(result.messages[0].id, 1);
+  assert.equal(result.messages[1].method, "turn/completed");
+});
+
+test("parseAppServerPayload rejects batch payloads with non-object entries", () => {
+  const result = parseAppServerPayload('[{"jsonrpc":"2.0","method":"turn/completed"},null]');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "invalid_shape");
 });
 
 test("classifyJsonRpcMessage detects response/request/notification/unknown", () => {

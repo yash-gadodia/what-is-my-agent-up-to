@@ -163,66 +163,67 @@ function handleAppServerMessage(raw) {
     return;
   }
 
-  const message = parsed.message;
-  const messageKind = classifyJsonRpcMessage(message);
+  for (const message of parsed.messages) {
+    const messageKind = classifyJsonRpcMessage(message);
 
-  if (messageKind === "response") {
-    const pending = pendingRequests.get(message.id);
-    if (!pending) return;
+    if (messageKind === "response") {
+      const pending = pendingRequests.get(message.id);
+      if (!pending) continue;
 
-    clearTimeout(pending.timer);
-    pendingRequests.delete(message.id);
+      clearTimeout(pending.timer);
+      pendingRequests.delete(message.id);
 
-    if (message.error) {
-      pending.reject(new Error(message.error.message || `Request ${pending.method} failed`));
-      return;
+      if (message.error) {
+        pending.reject(new Error(message.error.message || `Request ${pending.method} failed`));
+        continue;
+      }
+
+      pending.resolve(message.result);
+      continue;
     }
 
-    pending.resolve(message.result);
-    return;
-  }
+    if (messageKind === "request") {
+      const reply = {
+        jsonrpc: "2.0",
+        id: message.id,
+        error: {
+          code: -32601,
+          message: "Method not supported in non-interactive relay",
+        },
+      };
 
-  if (messageKind === "request") {
-    const reply = {
-      jsonrpc: "2.0",
-      id: message.id,
-      error: {
-        code: -32601,
-        message: "Method not supported in non-interactive relay",
-      },
-    };
+      try {
+        appServerSocket.send(JSON.stringify(reply));
+      } catch {
+        // Best effort error reply.
+      }
 
-    try {
-      appServerSocket.send(JSON.stringify(reply));
-    } catch {
-      // Best effort error reply.
+      broadcast({
+        type: "appserver.error",
+        ts: Date.now(),
+        message: `Unsupported server request: ${message.method}`,
+      });
+      continue;
+    }
+
+    if (messageKind === "notification") {
+      broadcast(message);
+
+      if (message.method === "turn/completed") {
+        turnCompleted = true;
+        gracefulShutdown(0);
+      }
+
+      continue;
     }
 
     broadcast({
       type: "appserver.error",
       ts: Date.now(),
-      message: `Unsupported server request: ${message.method}`,
+      message: "Unknown app-server message shape",
+      raw: message,
     });
-    return;
   }
-
-  if (messageKind === "notification") {
-    broadcast(message);
-
-    if (message.method === "turn/completed") {
-      turnCompleted = true;
-      gracefulShutdown(0);
-    }
-
-    return;
-  }
-
-  broadcast({
-    type: "appserver.error",
-    ts: Date.now(),
-    message: "Unknown app-server message shape",
-    raw: message,
-  });
 }
 
 broadcast({

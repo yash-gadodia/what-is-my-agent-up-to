@@ -14,6 +14,14 @@ const state = {
   baselineStats: new Map(),
 };
 
+class HttpError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.name = "HttpError";
+    this.statusCode = statusCode;
+  }
+}
+
 function withCorsHeaders(headers = {}) {
   return {
     "access-control-allow-origin": "*",
@@ -31,24 +39,61 @@ function sendJson(res, statusCode, payload) {
 function parseJsonBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
-    req.on("data", (chunk) => {
+    let settled = false;
+
+    function cleanup() {
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+      req.off("aborted", onAborted);
+    }
+
+    function fail(error) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    }
+
+    function succeed(payload) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(payload);
+    }
+
+    function onData(chunk) {
       raw += String(chunk);
       if (raw.length > 1024 * 256) {
-        reject(new Error("Payload too large"));
+        fail(new HttpError(413, "Payload too large"));
+        req.destroy();
       }
-    });
-    req.on("end", () => {
+    }
+
+    function onEnd() {
       if (!raw.trim()) {
-        resolve({});
+        succeed({});
         return;
       }
       try {
-        resolve(JSON.parse(raw));
+        succeed(JSON.parse(raw));
       } catch {
-        reject(new Error("Invalid JSON body"));
+        fail(new HttpError(400, "Invalid JSON body"));
       }
-    });
-    req.on("error", reject);
+    }
+
+    function onAborted() {
+      fail(new HttpError(400, "Request body aborted"));
+    }
+
+    function onError(error) {
+      fail(error);
+    }
+
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("aborted", onAborted);
+    req.on("error", onError);
   });
 }
 
@@ -200,7 +245,8 @@ const server = http.createServer(async (req, res) => {
 
     sendJson(res, 404, { ok: false, error: "Not found" });
   } catch (error) {
-    sendJson(res, 500, {
+    const statusCode = error instanceof HttpError ? error.statusCode : 500;
+    sendJson(res, statusCode, {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     });

@@ -2,6 +2,10 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function isMessageObjectList(value) {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => isObject(item));
+}
+
 export function decodeWsPayload(raw) {
   if (typeof raw === "string") return raw;
   if (Buffer.isBuffer(raw)) return raw.toString("utf8");
@@ -32,28 +36,37 @@ export function decodeWsPayload(raw) {
 }
 
 export function parseAppServerPayload(raw) {
+  const decoded = decodeWsPayload(raw);
   let parsed;
   try {
-    parsed = JSON.parse(decodeWsPayload(raw));
+    parsed = JSON.parse(decoded);
   } catch {
     return {
       ok: false,
       reason: "invalid_json",
-      raw: String(raw),
+      raw: decoded,
     };
   }
 
-  if (!isObject(parsed)) {
+  if (isObject(parsed)) {
     return {
-      ok: false,
-      reason: "invalid_shape",
-      raw: parsed,
+      ok: true,
+      message: parsed,
+      messages: [parsed],
+    };
+  }
+
+  if (isMessageObjectList(parsed)) {
+    return {
+      ok: true,
+      messages: parsed,
     };
   }
 
   return {
-    ok: true,
-    message: parsed,
+    ok: false,
+    reason: "invalid_shape",
+    raw: parsed,
   };
 }
 

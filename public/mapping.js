@@ -225,6 +225,17 @@ function makeErrorSignature(message) {
   return message.toLowerCase().replace(/\s+/g, " ").slice(0, 90);
 }
 
+function createDerivedEventContext(base, derived) {
+  const push = (event) => derived.push(decorateDerivedEvent({ ...base, ...event }));
+  const pushErrorEvent = (errorMessage) =>
+    push({
+      kind: "error",
+      message: errorMessage,
+      signature: makeErrorSignature(errorMessage),
+    });
+  return { push, pushErrorEvent };
+}
+
 function pushFileEvents(derived, base, filePaths, message) {
   for (const filePath of filePaths) {
     derived.push({
@@ -290,87 +301,77 @@ function isSwarmNoisyMethod(method) {
   return isDeltaSuffix && method !== "item/filechange/outputdelta";
 }
 
-function applyMethodRules(context) {
-  const {
-    method,
-    rawEvent,
-    rawType,
-    message,
-    toolName,
-    filePaths,
-    base,
-    push,
-    pushErrorEvent,
-    derived,
-  } = context;
-
-  if (method === "turn/started") {
+const METHOD_RULES = {
+  "turn/started": ({ message, push }) => {
     push({
       kind: "step.started",
       message: message || "Turn started",
     });
-  }
-
-  if (method === "turn/completed") {
+  },
+  "turn/completed": ({ message, push }) => {
     push({
       kind: "step.ended",
       message: message || "Turn completed",
     });
-  }
-
-  if (method === "item/started") {
+  },
+  "item/started": ({ message, toolName, push }) => {
     push({
       kind: "tool.activity",
       toolName,
       message: message || "Item started",
     });
-  }
-
-  if (method === "item/completed") {
+  },
+  "item/completed": ({ rawEvent, message, push, pushErrorEvent }) => {
     const statusBlob = toLowerText(safeStringify(rawEvent?.params?.item || rawEvent?.params || rawEvent));
     if (/(failed|failure|error|declined|aborted|timeout)/.test(statusBlob)) {
       pushErrorEvent(message || "Item failed");
-    } else if (/(completed|success|succeeded|passed)/.test(statusBlob)) {
+      return;
+    }
+    if (/(completed|success|succeeded|passed)/.test(statusBlob)) {
       push({
         kind: "success",
         message: message || "Item completed",
       });
     }
-  }
+  },
+  error: ({ message, rawType, pushErrorEvent }) => {
+    pushErrorEvent(message || rawType || "Error event");
+  },
+};
 
+function applyMethodRules(context) {
+  const { method, rawType, message, filePaths, base, derived } = context;
+  const rule = METHOD_RULES[method];
+  if (rule) {
+    rule(context);
+  }
   if (isDiffUpdateMethod(method)) {
     pushFileEvents(derived, base, filePaths, message || rawType);
   }
-
-  if (method === "error") {
-    pushErrorEvent(message || rawType || "Error event");
-  }
 }
 
+const RAW_TYPE_STARTED_RE =
+  /(turn\.started|turn_started|step\.started|step_started|run\.started|session\.started|conversation\.started|agent\.started)/;
+const RAW_TYPE_ENDED_RE =
+  /(turn\.ended|turn\.completed|turn\.finished|step\.ended|step\.completed|run\.ended|run\.completed|session\.ended|agent\.completed|finished|done)/;
+const RAW_TYPE_TOOL_ACTIVITY_RE = /(turn\.started|tool|exec|run)/;
+
 function applyRawTypeRules({ rawTypeLower, rawType, message, toolName, push }) {
-  if (
-    /(turn\.started|turn_started|step\.started|step_started|run\.started|session\.started|conversation\.started|agent\.started)/.test(
-      rawTypeLower
-    )
-  ) {
+  if (RAW_TYPE_STARTED_RE.test(rawTypeLower)) {
     push({
       kind: "step.started",
       message: message || "Step started",
     });
   }
 
-  if (
-    /(turn\.ended|turn\.completed|turn\.finished|step\.ended|step\.completed|run\.ended|run\.completed|session\.ended|agent\.completed|finished|done)/.test(
-      rawTypeLower
-    )
-  ) {
+  if (RAW_TYPE_ENDED_RE.test(rawTypeLower)) {
     push({
       kind: "step.ended",
       message: message || "Step ended",
     });
   }
 
-  if (/(turn\.started|tool|exec|run)/.test(rawTypeLower)) {
+  if (RAW_TYPE_TOOL_ACTIVITY_RE.test(rawTypeLower)) {
     push({
       kind: "tool.activity",
       toolName,
@@ -429,13 +430,7 @@ export function mapCodexToVizEvents(rawEvent) {
     ts,
     rawType,
   };
-  const push = (event) => derived.push(decorateDerivedEvent({ ...base, ...event }));
-  const pushErrorEvent = (errorMessage) =>
-    push({
-      kind: "error",
-      message: errorMessage,
-      signature: makeErrorSignature(errorMessage),
-    });
+  const { push, pushErrorEvent } = createDerivedEventContext(base, derived);
 
   applyMethodRules({
     method,

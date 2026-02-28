@@ -14,6 +14,8 @@ const SETTINGS_KEY = "agent-viz-settings-v3";
 const APP_NAME = "Lorong AI x Codex Mission Room";
 const WORLD = { width: 1280, height: 720 };
 const SWARM_PHASE_DWELL_MS = 2200;
+const DEMO_SWIMLANE_TICK_MS = 1300;
+const DEMO_SWIMLANE_CYCLES = 12;
 
 const PHASE_COLUMNS = [
   { id: "plan", street: "Planning Street", emoji: "🗺", color: "#5f91e6", accent: "#dbe8ff" },
@@ -208,6 +210,8 @@ const state = {
     keyboardFocusIndex: 0,
     actorRects: [],
     overlaySignature: "",
+    queueSignature: "",
+    approvalSignature: "",
   },
   simulatorTimers: [],
   persistTimer: null,
@@ -942,7 +946,7 @@ function selectRun(runId, options = {}) {
   state.ui.focusedPhase = run.requiresHumanGate ? "approval" : run.currentPhase;
   state.ui.highlightRunId = runId;
   if (options.drawerMode) state.ui.drawerMode = options.drawerMode;
-  setAgentDrawerOpen(true);
+  if (options.openDrawer) setAgentDrawerOpen(true);
 
   if (state.replay.active && state.replay.sourceRunId !== runId) stopReplay();
 
@@ -1024,7 +1028,7 @@ function jumpToFirstAnomaly(runId) {
   if (record) {
     run.highlight = { until: nowMs() + 2500, phase: run.currentPhase };
   }
-  selectRun(runId, { drawerMode: "failure" });
+  selectRun(runId, { drawerMode: "failure", openDrawer: true });
 }
 
 function actionRecommendations(run) {
@@ -1690,7 +1694,7 @@ function renderMapOverlay() {
     button.tabIndex = index === state.ui.keyboardFocusIndex ? 0 : -1;
 
     button.addEventListener("click", () => {
-      selectRun(actor.run.runId, { drawerMode: "overview" });
+      selectRun(actor.run.runId, { drawerMode: "overview", openDrawer: true });
     });
 
     button.addEventListener("keydown", (event) => {
@@ -1735,6 +1739,14 @@ function renderNeedsAttentionQueue(runs) {
   const queueRuns = runs
     .filter((run) => run.requiresHumanGate || (ATTENTION_RANK[run.needsAttentionSeverity] || 0) >= ATTENTION_RANK.info)
     .sort(queueSort);
+  const nowBucket = Math.floor(nowMs() / 1000);
+  let signature = `${nowBucket}|${state.ui.selectedAgentRunId || ""}|${queueRuns.length}`;
+  for (const run of queueRuns) {
+    const latestAlert = run.alertFeed.at(-1);
+    signature += `|${run.runId}:${run.operationalStatus}:${run.currentPhase}:${run.requiresHumanGate ? 1 : 0}:${run.needsAttentionSeverity}:${run.blockedSinceTs || 0}:${latestAlert?.message || run.blockedReason || run.approvalSummary || ""}`;
+  }
+  if (signature === state.ui.queueSignature) return;
+  state.ui.queueSignature = signature;
 
   attentionQueueEl.innerHTML = "";
   for (const run of queueRuns) {
@@ -1793,11 +1805,11 @@ function renderAgentTable(runs) {
       <td>${run.lastActionTs ? ageText(run.lastActionTs) : "n/a"}</td>
     `;
 
-    tr.addEventListener("click", () => selectRun(run.runId));
+    tr.addEventListener("click", () => selectRun(run.runId, { openDrawer: true }));
     tr.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        selectRun(run.runId);
+        selectRun(run.runId, { openDrawer: true });
       }
     });
 
@@ -1809,9 +1821,16 @@ function renderApprovalStreet(runs) {
   const approvals = runs.filter((run) => run.requiresHumanGate).sort(queueSort);
   setApprovalOverlayVisible(approvals.length > 0);
   approvalCountEl.textContent = `${approvals.length} pending`;
-  if (approvals.length > 0 && !state.ui.approvalStreetExpanded) setApprovalStreetExpanded(true);
-  if (approvals.length === 0) setApprovalStreetExpanded(false);
-
+  if (approvals.length > 0) setApprovalStreetExpanded(true);
+  if (approvals.length === 0 && state.ui.approvalStreetExpanded && !state.ui.approvalStreetManual) {
+    setApprovalStreetExpanded(false);
+  }
+  let signature = `${approvals.length}|${state.ui.approvalStreetExpanded ? 1 : 0}|${state.ui.approvalStreetManual ? 1 : 0}`;
+  for (const run of approvals) {
+    signature += `|${run.runId}:${run.label}:${run.approvalRisk}:${run.approvalSummary || ""}`;
+  }
+  if (signature === state.ui.approvalSignature) return;
+  state.ui.approvalSignature = signature;
   state.ui.approvalOverlayRects = approvals.map((run, index) => ({ runId: run.runId, index }));
   approvalListEl.innerHTML = "";
 
@@ -1827,7 +1846,7 @@ function renderApprovalStreet(runs) {
       <span>Risk: ${run.approvalRisk.toUpperCase()}</span>
       <button type="button" data-action="approve" data-run-id="${run.runId}">Approve</button>
     `;
-    div.addEventListener("click", () => selectRun(run.runId));
+    div.addEventListener("click", () => selectRun(run.runId, { openDrawer: true }));
     approvalListEl.append(div);
   }
 }
@@ -1888,6 +1907,8 @@ function renderWsStatus() {
 function renderUi() {
   updateAllDerived();
   const runs = getRunsForView();
+  state.ui.queueSignature = "";
+  state.ui.approvalSignature = "";
   renderGlobalHud();
   drawMap();
   renderNeedsAttentionQueue(runs);
@@ -2083,7 +2104,7 @@ async function importRunFromFile(file) {
   }
 
   state.activeManualRunId = runId;
-  selectRun(runId);
+  selectRun(runId, { openDrawer: true });
   queuePersistence();
   renderUi();
 }
@@ -2093,7 +2114,7 @@ function clearSimulatorTimers() {
   state.simulatorTimers.length = 0;
 }
 
-function runScenario(name) {
+function runScenario(name, options = {}) {
   const events = scenarioEvents(name);
   let index = 0;
   const timer = window.setInterval(() => {
@@ -2104,7 +2125,7 @@ function runScenario(name) {
     }
 
     ingestRawEvent({ ...event, ts: nowMs() });
-    if (event.run_id) {
+    if (options.autoSelect && event.run_id) {
       const runId = `explicit:${sanitizeRunIdentity(event.run_id)}`;
       if (state.runs.has(runId)) selectRun(runId);
     }
@@ -2120,8 +2141,143 @@ function runSimulatorPack() {
   window.setTimeout(() => runScenario("asleep"), 800);
 }
 
+function laneNameForPhase(phase) {
+  if (phase === "plan") return "planning";
+  if (phase === "verify") return "verification";
+  if (phase === "report") return "reporting";
+  return "execution";
+}
+
+function phaseMessage(phase, cycle) {
+  if (phase === "plan") return `planning step ${cycle + 1}: refining task scope`;
+  if (phase === "verify") return `verification step ${cycle + 1}: running checks`;
+  if (phase === "report") return `reporting step ${cycle + 1}: summarizing status`;
+  return `execution step ${cycle + 1}: applying code update`;
+}
+
+function runSwimlaneDemo() {
+  clearSimulatorTimers();
+  setAgentDrawerOpen(false);
+
+  const demoAgents = [
+    { id: "sim-lane-plan-1", phase: "plan" },
+    { id: "sim-lane-exec-1", phase: "execute" },
+    { id: "sim-lane-verify-1", phase: "verify" },
+    { id: "sim-lane-report-1", phase: "report" },
+    { id: "sim-lane-exec-2", phase: "execute" },
+  ];
+  const interventionState = {
+    opsOpened: false,
+  };
+
+  let cycle = 0;
+  const timer = window.setInterval(() => {
+    if (cycle >= DEMO_SWIMLANE_CYCLES) {
+      clearInterval(timer);
+      return;
+    }
+
+    const primary = demoAgents[cycle % demoAgents.length];
+    const secondary = demoAgents[(cycle + 2) % demoAgents.length];
+    const activeAgents = cycle % 3 === 0 ? [primary, secondary] : [primary];
+
+    for (const agent of activeAgents) {
+      const runId = agent.id;
+      const base = {
+        run_id: runId,
+        lane: laneNameForPhase(agent.phase),
+      };
+      let needsManualIntervention = false;
+
+      ingestRawEvent({
+        ...base,
+        type: "turn.started",
+        ts: nowMs(),
+        message: phaseMessage(agent.phase, cycle),
+      });
+
+      ingestRawEvent({
+        ...base,
+        type: "tool.run",
+        ts: nowMs() + 1,
+        tool: agent.phase === "verify" ? "Bash" : "Edit",
+        message:
+          agent.phase === "plan"
+            ? `planning note ${cycle + 1}`
+            : agent.phase === "verify"
+              ? `verify test pass ${cycle + 1}`
+              : agent.phase === "report"
+                ? `report update ${cycle + 1}`
+                : `execute patch ${cycle + 1}`,
+        path:
+          agent.phase === "plan"
+            ? "docs/plan.md"
+            : agent.phase === "verify"
+              ? "tests/integration/ws.test.ts"
+              : agent.phase === "report"
+                ? "docs/status.md"
+                : "src/app.ts",
+      });
+
+      if (agent.phase !== "plan") {
+        ingestRawEvent({
+          ...base,
+          type: "file.changed",
+          ts: nowMs() + 2,
+          message: `${agent.phase} file updated`,
+          path:
+            agent.phase === "verify"
+              ? "tests/integration/ws.test.ts"
+              : agent.phase === "report"
+                ? "docs/status.md"
+                : "src/app.ts",
+        });
+      }
+
+      if (cycle === 3 && agent.id === "sim-lane-verify-1") {
+        needsManualIntervention = true;
+        ingestRawEvent({
+          ...base,
+          type: "note",
+          ts: nowMs() + 3,
+          message: "Blocked waiting for flaky integration dependency. Needs operator intervention.",
+        });
+
+        if (!interventionState.opsOpened) {
+          interventionState.opsOpened = true;
+          setOpsDrawerOpen(true);
+        }
+      }
+
+      if ((cycle === 5 && agent.id === "sim-lane-report-1") || (cycle === 8 && agent.id === "sim-lane-exec-2")) {
+        needsManualIntervention = true;
+        ingestRawEvent({
+          ...base,
+          type: "note",
+          ts: nowMs() + 3,
+          message: "Awaiting user approval before applying risky change.",
+        });
+        setApprovalStreetExpanded(true, { manual: false });
+      }
+
+      if (!needsManualIntervention && (cycle === DEMO_SWIMLANE_CYCLES - 1 || cycle % 2 === 1)) {
+        ingestRawEvent({
+          ...base,
+          type: "turn.completed",
+          ts: nowMs() + 3,
+          message: `${agent.phase} step completed`,
+        });
+      }
+    }
+
+    cycle += 1;
+  }, DEMO_SWIMLANE_TICK_MS);
+
+  state.simulatorTimers.push(timer);
+}
+
 function runFullSimulationDemo() {
-  runSimulatorPack();
+  runSwimlaneDemo();
 }
 
 function scenarioEvents(name) {
@@ -2209,7 +2365,7 @@ function setupEventHandlers() {
       label: `codex:run:${state.manualRunCounter}`,
     });
     state.activeManualRunId = runId;
-    selectRun(runId);
+    selectRun(runId, { openDrawer: false });
   });
 
   reconnectBtnEl.addEventListener("click", () => {
@@ -2263,7 +2419,7 @@ function setupEventHandlers() {
 
     const action = button?.dataset.action;
     if (!action) {
-      selectRun(runId);
+      selectRun(runId, { openDrawer: true });
       return;
     }
 
@@ -2276,7 +2432,7 @@ function setupEventHandlers() {
       return;
     }
     if (action === "failure") {
-      selectRun(runId, { drawerMode: "failure" });
+      selectRun(runId, { drawerMode: "failure", openDrawer: true });
       return;
     }
     if (action === "input") {
@@ -2285,7 +2441,7 @@ function setupEventHandlers() {
       return;
     }
     if (action === "open") {
-      selectRun(runId, { drawerMode: "overview" });
+      selectRun(runId, { drawerMode: "overview", openDrawer: true });
     }
   });
 

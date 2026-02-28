@@ -2279,6 +2279,7 @@ function runSwimlaneDemo() {
     opsOpened: false,
     holds: new Map(),
     recoveriesShown: new Set(),
+    triggered: new Set(),
   };
   const HOLD_STALL = "stall";
   const HOLD_APPROVAL = "approval";
@@ -2374,7 +2375,11 @@ function runSwimlaneDemo() {
         });
       }
 
-      if (cycle === 3 && agent.id === "sim-lane-verify-1") {
+      const stallTriggerId = `${agent.id}:stall`;
+      const approvalTriggerId = `${agent.id}:approval`;
+
+      if (cycle >= 2 && agent.id === "sim-lane-verify-1" && !interventionState.triggered.has(stallTriggerId)) {
+        interventionState.triggered.add(stallTriggerId);
         needsManualIntervention = true;
         setDemoScriptBanner("Step 2: Verification agent is in cul-de-sac. Click Approve next to unblock.", true);
         interventionState.holds.set(runId, HOLD_STALL);
@@ -2392,7 +2397,11 @@ function runSwimlaneDemo() {
         }
       }
 
-      if ((cycle === 5 && agent.id === "sim-lane-report-1") || (cycle === 8 && agent.id === "sim-lane-exec-2")) {
+      if (
+        ((cycle >= 8 && agent.id === "sim-lane-report-1") || (cycle >= 9 && agent.id === "sim-lane-exec-2")) &&
+        !interventionState.triggered.has(approvalTriggerId)
+      ) {
+        interventionState.triggered.add(approvalTriggerId);
         needsManualIntervention = true;
         setDemoScriptBanner("Step 3: Approval gate triggered. Use Approval Street to continue.", true);
         interventionState.holds.set(runId, HOLD_APPROVAL);

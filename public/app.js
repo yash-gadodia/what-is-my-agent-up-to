@@ -420,6 +420,41 @@ function compactText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function deepFindCommandCandidate(value, depth = 0) {
+  if (!value || depth > 5) return "";
+  if (typeof value === "string") return "";
+  if (Array.isArray(value)) {
+    const textParts = value.filter((item) => typeof item === "string").map((item) => compactText(item)).filter(Boolean);
+    if (textParts.length > 1) return textParts.join(" ");
+    for (const item of value) {
+      const nested = deepFindCommandCandidate(item, depth + 1);
+      if (nested) return nested;
+    }
+    return "";
+  }
+  if (typeof value !== "object") return "";
+
+  const keys = ["command", "cmd", "argv", "args"];
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string") {
+      const text = compactText(candidate);
+      if (text) return text;
+    }
+    if (Array.isArray(candidate)) {
+      const joined = candidate.filter((item) => typeof item === "string").join(" ");
+      const text = compactText(joined);
+      if (text) return text;
+    }
+  }
+
+  for (const nested of Object.values(value)) {
+    const result = deepFindCommandCandidate(nested, depth + 1);
+    if (result) return result;
+  }
+  return "";
+}
+
 function firstCommandCandidate(rawEvent) {
   const params = rawEvent?.params && typeof rawEvent.params === "object" ? rawEvent.params : {};
   const item = params?.item && typeof params.item === "object" ? params.item : {};
@@ -439,7 +474,7 @@ function firstCommandCandidate(rawEvent) {
     const text = compactText(candidate);
     if (text) return text;
   }
-  return "";
+  return deepFindCommandCandidate(rawEvent);
 }
 
 function extractCommandAnnouncement(rawEvent) {
@@ -2166,7 +2201,13 @@ function connectWebSocket() {
   socket.addEventListener("open", () => {
     state.ws.status = "connected";
     state.ws.attempts = 0;
+    if (!state.ui.latestCommandText) {
+      state.ui.latestCommandSource = "Announcement";
+      state.ui.latestCommandText = `Connected to ${WS_URL}. Waiting for live command events.`;
+      state.ui.latestCommandTs = nowMs();
+    }
     renderWsStatus();
+    renderUi();
   });
 
   socket.addEventListener("message", (message) => {

@@ -24,6 +24,7 @@ const PHASE_COLUMNS = [
   { id: "verify", street: "Verification Street", emoji: "🧪", color: "#d69c1f", accent: "#ffefc4" },
   { id: "report", street: "Reporting Street", emoji: "📝", color: "#4e9cd8", accent: "#d9f0ff" },
 ];
+const PHASE_INDEX = Object.fromEntries(PHASE_COLUMNS.map((phase, index) => [phase.id, index]));
 
 const PHASE_WEIGHT = {
   plan: 2,
@@ -72,7 +73,7 @@ const ROTATED_PATTERN_CACHE = new Map();
 const CHARACTER_SPRITE_PATHS_BY_STATE = {
   active: "/assets/characters/active.png",
   waiting: "/assets/characters/waiting.png",
-  approval: "/assets/characters/needs human.png",
+  approval: "/assets/characters/needs_human.png",
   blocked: "/assets/characters/blocked.png",
   loop: "/assets/characters/blocked.png",
   failed: "/assets/characters/failed.png",
@@ -240,6 +241,7 @@ const state = {
     paneSignature: "",
     demoScriptVisible: false,
     demoScriptText: "",
+    simulationLock: false,
   },
   simulatorTimers: [],
   persistTimer: null,
@@ -1000,6 +1002,7 @@ function integrateDerivedSet(run, rawEvent, derivedEvents, options = {}) {
 
 function ingestRawEvent(rawEvent, options = {}) {
   if (!rawEvent || typeof rawEvent !== "object") return;
+  if (state.ui.simulationLock && rawEvent?.swarm) return;
   const announcementUpdated = updateAnnouncementFromRawEvent(rawEvent);
   const derivedEvents = mapCodexToVizEvents(rawEvent);
   if (derivedEvents.length === 0) {
@@ -1622,7 +1625,12 @@ function visualStateForRun(run) {
 
 function characterSpriteForRun(visualState) {
   if (!visualState) return null;
-  return CHARACTER_SPRITES.byState[visualState] || null;
+  return (
+    CHARACTER_SPRITES.byState[visualState]
+    || CHARACTER_SPRITES.byState.waiting
+    || CHARACTER_SPRITES.byState.active
+    || null
+  );
 }
 
 function isCharacterSheetImage(sprite) {
@@ -1854,14 +1862,45 @@ function packActors(rect, runs, densityMode, section, phase) {
   return { placements, clustered: true };
 }
 
-function drawMap() {
+function buildLaneRunStats(runs) {
+  const laneStats = PHASE_COLUMNS.map(() => ({
+    laneRuns: [],
+    culRuns: [],
+    mainRuns: [],
+    activeCount: 0,
+    waitingCount: 0,
+    stalledCount: 0,
+    oldestStallTs: 0,
+  }));
+
+  for (const run of runs) {
+    const phaseIndex = PHASE_INDEX[run.currentPhase];
+    if (phaseIndex === undefined) continue;
+    const lane = laneStats[phaseIndex];
+    lane.laneRuns.push(run);
+    if (run.operationalStatus === "active") lane.activeCount += 1;
+    if (run.operationalStatus === "waiting") lane.waitingCount += 1;
+
+    if (CULDESAC_BLOCKERS.has(run.blockerClass)) {
+      lane.culRuns.push(run);
+      lane.stalledCount += 1;
+      const stallTs = run.blockedSinceTs || run.lastActionTs || 0;
+      if (stallTs && (!lane.oldestStallTs || stallTs < lane.oldestStallTs)) lane.oldestStallTs = stallTs;
+    } else {
+      lane.mainRuns.push(run);
+    }
+  }
+
+  return laneStats;
+}
+
+function drawMap(runs = getRunsForView()) {
   const timeSec = performance.now() / 1000;
   ctx.clearRect(0, 0, WORLD.width, WORLD.height);
   drawRoundedRect(ctx, 0, 0, WORLD.width, WORLD.height, 0, "#0d2235");
   drawText(ctx, "City Control Room", 18, 24, "#e8f5ff", 15);
   drawText(ctx, "Stateful Pixel Agents | Main Road = flow | Cul-de-Sac = stalled", 18, 42, "#c0d6e8", 10);
 
-  const runs = getRunsForView();
   state.ui.actorRects = [];
   const useCityArt = state.ui.cityArtEnabled
     && CITY_ART.roadBase.image
@@ -1874,20 +1913,12 @@ function drawMap() {
     && CITY_ART.building08.image
     && CITY_ART.building09.image;
 
+  const laneStats = buildLaneRunStats(runs);
   let densityTriggered = false;
   const lanes = PHASE_COLUMNS.map((lane, idx) => {
     const g = phaseLaneGeometry(idx);
-    const laneRuns = runs.filter((run) => run.currentPhase === lane.id);
-    const culRuns = laneRuns.filter((run) => CULDESAC_BLOCKERS.has(run.blockerClass));
-    const mainRuns = laneRuns.filter((run) => !CULDESAC_BLOCKERS.has(run.blockerClass));
-    const activeCount = laneRuns.filter((run) => run.operationalStatus === "active").length;
-    const waitingCount = laneRuns.filter((run) => run.operationalStatus === "waiting").length;
-    const stalledCount = culRuns.length;
-    const oldestStallTs = culRuns
-      .map((run) => run.blockedSinceTs || run.lastActionTs || 0)
-      .filter(Boolean)
-      .sort((a, b) => a - b)[0];
-    return { lane, g, laneRuns, culRuns, mainRuns, activeCount, waitingCount, stalledCount, oldestStallTs };
+    const stats = laneStats[idx];
+    return { lane, g, ...stats };
   });
 
   for (const item of lanes) {
@@ -2330,13 +2361,21 @@ function renderUi() {
   state.ui.approvalSignature = "";
   state.ui.paneSignature = "";
   renderGlobalHud();
-  drawMap();
+  drawMap(runs);
   renderPaneView(runs);
   renderNeedsAttentionQueue(runs);
   renderAgentTable(runs);
   renderApprovalStreet(runs);
   renderDrawer();
   renderReplayUi();
+}
+
+async function decodeWebSocketPayload(data) {
+  if (typeof data === "string") return data;
+  if (data instanceof Blob) return data.text();
+  if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+  if (ArrayBuffer.isView(data)) return new TextDecoder().decode(data);
+  return "";
 }
 
 function connectWebSocket() {
@@ -2377,13 +2416,36 @@ function connectWebSocket() {
     renderUi();
   });
 
-  socket.addEventListener("message", (message) => {
-    const payload = typeof message.data === "string" ? message.data : "";
-    if (!payload) return;
+  socket.addEventListener("message", async (message) => {
+    let payload = "";
+    try {
+      payload = await decodeWebSocketPayload(message.data);
+    } catch {
+      ingestRawEvent({
+        type: "dashboard.parse.error",
+        ts: nowMs(),
+        message: "Unable to decode websocket payload",
+      });
+      return;
+    }
+
+    if (!payload.trim()) {
+      ingestRawEvent({
+        type: "dashboard.parse.error",
+        ts: nowMs(),
+        message: "Empty websocket payload",
+      });
+      return;
+    }
+
     try {
       ingestRawEvent(JSON.parse(payload));
     } catch {
-      ingestRawEvent({ type: "dashboard.parse.error", ts: nowMs(), message: "Invalid websocket payload" });
+      ingestRawEvent({
+        type: "dashboard.parse.error",
+        ts: nowMs(),
+        message: "Invalid websocket payload",
+      });
     }
   });
 
@@ -2539,6 +2601,7 @@ async function importRunFromFile(file) {
 function clearSimulatorTimers() {
   for (const timer of state.simulatorTimers) clearInterval(timer);
   state.simulatorTimers.length = 0;
+  state.ui.simulationLock = false;
 }
 
 function runScenario(name, options = {}) {
@@ -2604,6 +2667,7 @@ function runSwimlaneDemo() {
   clearDemoLaneRuns();
   setOpsDrawerOpen(false);
   setAgentDrawerOpen(false);
+  state.ui.simulationLock = true;
   setDemoScriptBanner("Step 1: Agents fan out across plan/execute/verify/report lanes.", true);
 
   const demoAgents = [
@@ -2676,6 +2740,7 @@ function runSwimlaneDemo() {
       setDemoScriptBanner("Demo complete: interventions resolved and agents finished.", true);
       const hideTimer = window.setTimeout(() => {
         setDemoScriptBanner("", false);
+        state.ui.simulationLock = false;
         clearTimeout(hideTimer);
       }, 3200);
       return;
@@ -3049,7 +3114,7 @@ function frame(now) {
     lastFrameAt = now;
     const runs = getRunsForView();
     renderGlobalHud();
-    drawMap();
+    drawMap(runs);
     renderPaneView(runs);
     renderNeedsAttentionQueue(runs);
     renderApprovalStreet(runs);

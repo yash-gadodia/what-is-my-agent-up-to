@@ -38,6 +38,12 @@ function broadcast(obj) {
   }
 }
 
+function broadcastCodexLog(type, stream, chunk) {
+  const text = String(chunk || "").trim();
+  if (!text) return;
+  broadcast({ type, ts: Date.now(), text, stream });
+}
+
 let shuttingDown = false;
 let turnCompleted = false;
 let appServerSocket = null;
@@ -218,16 +224,12 @@ const codex = spawn("codex", ["app-server", "--listen", `ws://127.0.0.1:${appSer
 
 codex.stdout.setEncoding("utf8");
 codex.stdout.on("data", (chunk) => {
-  const text = String(chunk || "").trim();
-  if (!text) return;
-  broadcast({ type: "codex.stderr", ts: Date.now(), text, stream: "stdout" });
+  broadcastCodexLog("codex.stdout", "stdout", chunk);
 });
 
 codex.stderr.setEncoding("utf8");
 codex.stderr.on("data", (chunk) => {
-  const text = String(chunk || "").trim();
-  if (!text) return;
-  broadcast({ type: "codex.stderr", ts: Date.now(), text, stream: "stderr" });
+  broadcastCodexLog("codex.stderr", "stderr", chunk);
 });
 
 codex.on("error", (error) => {

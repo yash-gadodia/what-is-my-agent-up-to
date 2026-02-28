@@ -161,6 +161,14 @@ body.colorblind {
   overflow-y: hidden;
 }
 
+.summary-secondary {
+  display: none;
+}
+
+.top-summary.summary-expanded .summary-secondary {
+  display: inline-flex;
+}
+
 .summary-chip,
 .chip,
 .caption-pill {
@@ -204,6 +212,32 @@ body.colorblind {
   font-size: 13px;
   letter-spacing: 0.06em;
   box-shadow: 0 4px 14px rgba(9, 124, 59, 0.25);
+  transition:
+    transform 200ms ease,
+    box-shadow 200ms ease,
+    filter 200ms ease;
+}
+
+.summary-cta-run.pulse {
+  animation: sim-cta-pulse 1.9s ease-in-out infinite;
+}
+
+@keyframes sim-cta-pulse {
+  0% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 4px 14px rgba(9, 124, 59, 0.25);
+    filter: saturate(1);
+  }
+  50% {
+    transform: translateY(-1px) scale(1.02);
+    box-shadow: 0 8px 20px rgba(9, 124, 59, 0.38);
+    filter: saturate(1.08);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 4px 14px rgba(9, 124, 59, 0.25);
+    filter: saturate(1);
+  }
 }
 
 .is-hidden {

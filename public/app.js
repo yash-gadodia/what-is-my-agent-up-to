@@ -111,6 +111,7 @@ const summaryStalledEl = document.getElementById("summaryStalled");
 const summaryApprovalsEl = document.getElementById("summaryApprovals");
 const summaryPrimaryCtaEl = document.getElementById("summaryPrimaryCta");
 const summaryRunSimBtnEl = document.getElementById("summaryRunSimBtn");
+const topSummaryBarEl = document.getElementById("topSummaryBar");
 
 const mapViewportEl = document.getElementById("mapViewport");
 const mapOverlayEl = document.getElementById("mapOverlay");
@@ -1051,6 +1052,14 @@ function renderGlobalHud() {
 
   summaryPrimaryCtaEl.textContent = "Open Ops";
   summaryPrimaryCtaEl.dataset.action = "open-ops";
+
+  const hasActiveRuns = runs.some((item) => item.operationalStatus === "active" || item.operationalStatus === "waiting");
+  const hasOpenIssues = attentionRuns.length > 0 || approvals.length > 0 || stalledRuns.length > 0;
+  const shouldExpandSummary = mode === "Replay" || hasActiveRuns || hasOpenIssues || topStatus === "Blocked" || topStatus === "Degraded";
+  topSummaryBarEl.classList.toggle("summary-expanded", shouldExpandSummary);
+
+  const shouldPulseSimulationCta = mode === "Live" && !shouldExpandSummary && !state.ui.reducedMotion;
+  summaryRunSimBtnEl.classList.toggle("pulse", shouldPulseSimulationCta);
 
   if (run) {
     runBadgeEl.textContent = `${APP_NAME} | ${run.laneName} | ${run.label}`;

@@ -9,6 +9,9 @@
     "swarm": "node swarm.mjs",
     "swarm:continuous": "node swarm.mjs --repo . --count 4 --port 8899 --continuous true --prompt \"Map the top 5 technical risks in this repo and suggest mitigations.\" --prompt \"Run npm scripts and identify reliability gaps in local dev flow.\" --prompt \"Review websocket event mapping logic and propose concrete improvements.\" --prompt \"Find demo-breaking failure modes and suggest fail-fast checks.\"",
     "helper": "node helper.mjs",
+    "pitch:prep": "node scripts/update-pitch-prep.mjs",
+    "pitch:prep:verify": "node scripts/update-pitch-prep.mjs --verify",
+    "pitch:prep:watch": "node scripts/update-pitch-prep.mjs --watch --interval 30",
     "start": "npm run dev",
     "test": "node --test",
     "lint": "echo \"No lint configured for MVP\""

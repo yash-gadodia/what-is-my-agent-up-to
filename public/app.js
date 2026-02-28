@@ -70,13 +70,13 @@ const CITY_ART = {
 const CITY_BUILDING_KEYS = ["building06", "building07", "building08", "building09"];
 const ROTATED_PATTERN_CACHE = new Map();
 const CHARACTER_SPRITE_PATHS_BY_STATE = {
-  active: "/assets/characters/char_1.png",
-  waiting: "/assets/characters/char_2.png",
-  approval: "/assets/characters/char_5.png",
-  blocked: "/assets/characters/char_3.png",
-  loop: "/assets/characters/char_3.png",
-  failed: "/assets/characters/char_4.png",
-  done: "/assets/characters/char_0.png",
+  active: "/assets/characters/state_active.svg",
+  waiting: "/assets/characters/state_waiting.svg",
+  approval: "/assets/characters/state_approval.svg",
+  blocked: "/assets/characters/state_blocked.svg",
+  loop: "/assets/characters/state_blocked.svg",
+  failed: "/assets/characters/state_failed.svg",
+  done: "/assets/characters/state_done.svg",
 };
 const CHARACTER_SPRITES = {
   byState: {},

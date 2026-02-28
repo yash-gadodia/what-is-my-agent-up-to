@@ -85,6 +85,7 @@ const summaryNeedsAttentionEl = document.getElementById("summaryNeedsAttention")
 const summaryStalledEl = document.getElementById("summaryStalled");
 const summaryApprovalsEl = document.getElementById("summaryApprovals");
 const summaryPrimaryCtaEl = document.getElementById("summaryPrimaryCta");
+const summaryRunSimBtnEl = document.getElementById("summaryRunSimBtn");
 
 const mapViewportEl = document.getElementById("mapViewport");
 const mapOverlayEl = document.getElementById("mapOverlay");
@@ -372,6 +373,7 @@ function createRun({ runId, agentId, label, laneName, manual = false, simulated 
     runtimeMs: 0,
     lastActionTs: 0,
     errorSignatures: [],
+    alertFeed: [],
     highlight: null,
   };
 }
@@ -448,6 +450,8 @@ function deriveSummary(derivedEvents) {
     const tool = derivedEvents.find((item) => item.kind === "tool.activity");
     return `Tool activity: ${tool?.toolName || "tool"}`;
   }
+  if (kinds.includes("human.gate")) return "Approval required";
+  if (kinds.includes("stall")) return "Run stalled";
   return derivedEvents[0]?.message || "Note";
 }
 
@@ -531,6 +535,18 @@ function updateAllDerived() {
   if (state.replay.active && state.replay.previewRun) updateRunDerivedFields(state.replay.previewRun);
 }
 
+function pushAlert(run, derived, ts) {
+  const severity = derived.attentionSeverity || "none";
+  if (severity === "none") return;
+  run.alertFeed.push({
+    ts,
+    severity,
+    code: derived.attentionCode || "unknown",
+    message: derived.message || derived.rawType || "Attention required",
+  });
+  if (run.alertFeed.length > 120) run.alertFeed.shift();
+}
+
 function applyDerivedEvent(run, derived) {
   const ts = derived.ts || nowMs();
   const text = `${derived.rawType || ""} ${derived.message || ""}`.toLowerCase();
@@ -576,6 +592,19 @@ function applyDerivedEvent(run, derived) {
     run.blockedReason = "";
   }
 
+  if (derived.kind === "stall") {
+    run.blocked = true;
+    run.blockedReason = derived.message || "Run appears stalled";
+  }
+
+  if (derived.kind === "human.gate") {
+    run.requiresHumanGate = true;
+    run.approvalSummary = derived.message || "Requires approval";
+    if (!run.previousPhaseBeforeApproval) {
+      run.previousPhaseBeforeApproval = run.currentPhase;
+    }
+  }
+
   if (/(blocked|on hold|awaiting|waiting for)/.test(text)) {
     run.blocked = true;
     run.blockedReason = derived.message || derived.rawType || "blocked";
@@ -588,6 +617,8 @@ function applyDerivedEvent(run, derived) {
       run.previousPhaseBeforeApproval = run.currentPhase;
     }
   }
+
+  pushAlert(run, derived, ts);
 }
 
 function integrateDerivedSet(run, rawEvent, derivedEvents, options = {}) {
@@ -1214,6 +1245,8 @@ function renderNeedsAttentionQueue(runs) {
 
     const iconType = inferAgentType(run) === "simulated" ? "🧪" : inferAgentType(run) === "manual" ? "🛠" : "🤖";
     const phaseLabel = run.requiresHumanGate ? "approval" : run.currentPhase;
+    const latestAlert = run.alertFeed.at(-1);
+    const alertText = latestAlert?.message || run.blockedReason || run.approvalSummary || "Attention required";
 
     li.innerHTML = `
       <div class="attn-head">
@@ -1221,7 +1254,7 @@ function renderNeedsAttentionQueue(runs) {
         <span class="state-badge ${token.className}">${token.icon} ${run.operationalStatus}</span>
       </div>
       <div class="attn-sub">Phase: ${phaseLabel}</div>
-      <div class="attn-sub">${run.blockedReason || run.approvalSummary || "Attention required"}</div>
+      <div class="attn-sub">${alertText}</div>
       <div class="attn-sub">Blocked since: ${run.blockedSinceTs ? ageText(run.blockedSinceTs) : "n/a"}</div>
       <div class="attn-actions">
         <button type="button" data-action="approve" data-run-id="${run.runId}">Approve</button>
@@ -1591,6 +1624,10 @@ function runSimulatorPack() {
   window.setTimeout(() => runScenario("asleep"), 800);
 }
 
+function runFullSimulationDemo() {
+  runSimulatorPack();
+}
+
 function scenarioEvents(name) {
   if (name === "scolded") {
     return [
@@ -1667,6 +1704,10 @@ function setupEventHandlers() {
       return;
     }
     setOpsDrawerOpen(true);
+  });
+
+  summaryRunSimBtnEl.addEventListener("click", () => {
+    runFullSimulationDemo();
   });
 
   approvalStreetToggleEl.addEventListener("click", () => {

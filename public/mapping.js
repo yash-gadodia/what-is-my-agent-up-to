@@ -229,6 +229,49 @@ function pushFileEvents(derived, base, filePaths, message) {
   }
 }
 
+function isApprovalText(text) {
+  return /(approval|approve|awaiting user|needs user input|human input|manual gate|waiting for user|review)/.test(text);
+}
+
+function isStallText(text) {
+  return /(blocked|on hold|awaiting|waiting for|stalled|no progress|retrying)/.test(text);
+}
+
+function attentionMetaFor(kind, text) {
+  if (kind === "error" || /(error|failed|failure|exception|fatal|timeout)/.test(text)) {
+    return { attentionSeverity: "critical", attentionCode: "error" };
+  }
+  if (kind === "human.gate" || isApprovalText(text)) {
+    return { attentionSeverity: "warn", attentionCode: "approval_required" };
+  }
+  if (kind === "stall" || isStallText(text)) {
+    return { attentionSeverity: "warn", attentionCode: "stalled" };
+  }
+  return { attentionSeverity: "none", attentionCode: "none" };
+}
+
+function decorateDerivedEvent(event) {
+  const text = `${event.rawType || ""} ${event.message || ""}`.toLowerCase();
+  const meta = attentionMetaFor(event.kind, text);
+  return {
+    ...event,
+    attentionSeverity: meta.attentionSeverity,
+    attentionCode: meta.attentionCode,
+  };
+}
+
+function dedupeDerived(events) {
+  const out = [];
+  const seen = new Set();
+  for (const item of events) {
+    const key = `${item.kind}|${item.filePath || ""}|${item.toolName || ""}|${item.signature || ""}|${item.message || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 export function mapCodexToVizEvents(rawEvent) {
   const ts = getRawEventTimestamp(rawEvent);
   const rawType = getRawEventType(rawEvent);
@@ -246,26 +289,24 @@ export function mapCodexToVizEvents(rawEvent) {
     ts,
     rawType,
   };
+  const push = (event) => derived.push(decorateDerivedEvent({ ...base, ...event }));
 
   if (method === "turn/started") {
-    derived.push({
-      ...base,
+    push({
       kind: "step.started",
       message: message || "Turn started",
     });
   }
 
   if (method === "turn/completed") {
-    derived.push({
-      ...base,
+    push({
       kind: "step.ended",
       message: message || "Turn completed",
     });
   }
 
   if (method === "item/started") {
-    derived.push({
-      ...base,
+    push({
       kind: "tool.activity",
       toolName,
       message: message || "Item started",
@@ -276,15 +317,13 @@ export function mapCodexToVizEvents(rawEvent) {
     const statusBlob = toLowerText(safeStringify(rawEvent?.params?.item || rawEvent?.params || rawEvent));
     if (/(failed|failure|error|declined|aborted|timeout)/.test(statusBlob)) {
       const errorMessage = message || "Item failed";
-      derived.push({
-        ...base,
+      push({
         kind: "error",
         message: errorMessage,
         signature: makeErrorSignature(errorMessage),
       });
     } else if (/(completed|success|succeeded|passed)/.test(statusBlob)) {
-      derived.push({
-        ...base,
+      push({
         kind: "success",
         message: message || "Item completed",
       });
@@ -297,8 +336,7 @@ export function mapCodexToVizEvents(rawEvent) {
 
   if (method === "error") {
     const errorMessage = message || rawType || "Error event";
-    derived.push({
-      ...base,
+    push({
       kind: "error",
       message: errorMessage,
       signature: makeErrorSignature(errorMessage),
@@ -306,24 +344,21 @@ export function mapCodexToVizEvents(rawEvent) {
   }
 
   if (/(turn\.started|turn_started|step\.started|step_started|run\.started|session\.started|conversation\.started|agent\.started)/.test(rawTypeLower)) {
-    derived.push({
-      ...base,
+    push({
       kind: "step.started",
       message: message || "Step started",
     });
   }
 
   if (/(turn\.ended|turn\.completed|turn\.finished|step\.ended|step\.completed|run\.ended|run\.completed|session\.ended|agent\.completed|finished|done)/.test(rawTypeLower)) {
-    derived.push({
-      ...base,
+    push({
       kind: "step.ended",
       message: message || "Step ended",
     });
   }
 
   if (/(turn\.started|tool|exec|run)/.test(rawTypeLower)) {
-    derived.push({
-      ...base,
+    push({
       kind: "tool.activity",
       toolName,
       message: message || rawType,
@@ -332,8 +367,7 @@ export function mapCodexToVizEvents(rawEvent) {
 
   if (/(error|failed|failure|exception|fatal|timeout)/.test(combinedLower)) {
     const errorMessage = message || rawType || "Error event";
-    derived.push({
-      ...base,
+    push({
       kind: "error",
       message: errorMessage,
       signature: makeErrorSignature(errorMessage),
@@ -341,10 +375,23 @@ export function mapCodexToVizEvents(rawEvent) {
   }
 
   if (/(completed|succeeded|passed|success)/.test(combinedLower)) {
-    derived.push({
-      ...base,
+    push({
       kind: "success",
       message: message || rawType,
+    });
+  }
+
+  if (isApprovalText(combinedLower)) {
+    push({
+      kind: "human.gate",
+      message: message || "Awaiting approval",
+    });
+  }
+
+  if (isStallText(combinedLower)) {
+    push({
+      kind: "stall",
+      message: message || "Run appears stalled",
     });
   }
 
@@ -353,12 +400,11 @@ export function mapCodexToVizEvents(rawEvent) {
   }
 
   if (derived.length === 0) {
-    derived.push({
-      ...base,
+    push({
       kind: "note",
       message: message || rawType,
     });
   }
 
-  return derived;
+  return dedupeDerived(derived);
 }

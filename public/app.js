@@ -2162,18 +2162,29 @@ function renderPaneView(runs) {
 }
 
 function renderDrawer() {
+  const drawerV2Ready = Boolean(
+    drawerStatusChipEl
+      && drawerPhaseChipEl
+      && drawerAttentionChipEl
+      && drawerRuntimeEl
+      && drawerToolsEl
+      && drawerFilesEl
+      && drawerErrorsEl
+  );
   const run = getActiveRunForView();
   if (!run) {
     drawerTitleEl.textContent = "No agent selected";
     drawerTaskEl.textContent = "Select an agent tile, queue card, or table row.";
-    drawerStatusChipEl.className = "state-badge state-waiting";
-    drawerStatusChipEl.textContent = "⏳ waiting";
-    drawerPhaseChipEl.textContent = "Phase: n/a";
-    drawerAttentionChipEl.textContent = "Attention: none";
-    drawerRuntimeEl.textContent = "0s";
-    drawerToolsEl.textContent = "0";
-    drawerFilesEl.textContent = "0";
-    drawerErrorsEl.textContent = "0";
+    if (drawerV2Ready) {
+      drawerStatusChipEl.className = "state-badge state-waiting";
+      drawerStatusChipEl.textContent = "⏳ waiting";
+      drawerPhaseChipEl.textContent = "Phase: n/a";
+      drawerAttentionChipEl.textContent = "Attention: none";
+      drawerRuntimeEl.textContent = "0s";
+      drawerToolsEl.textContent = "0";
+      drawerFilesEl.textContent = "0";
+      drawerErrorsEl.textContent = "0";
+    }
     drawerLastSuccessEl.textContent = "n/a";
     drawerBlockerEl.textContent = "none";
     drawerRecommendationsEl.innerHTML = "";
@@ -2185,14 +2196,18 @@ function renderDrawer() {
   const phaseText = run.requiresHumanGate ? "approval" : run.currentPhase;
   drawerTitleEl.textContent = run.label.replace(/^codex:/, "");
   drawerTaskEl.textContent = run.timeline.at(-1)?.summary || "No event captured yet.";
-  drawerStatusChipEl.className = `state-badge ${token.className}`;
-  drawerStatusChipEl.textContent = `${token.icon} ${run.operationalStatus}`;
-  drawerPhaseChipEl.textContent = `Phase: ${phaseText}`;
-  drawerAttentionChipEl.textContent = `Attention: ${run.needsAttentionSeverity}`;
-  drawerRuntimeEl.textContent = formatDuration(run.runtimeMs);
-  drawerToolsEl.textContent = String(run.toolCount);
-  drawerFilesEl.textContent = String(run.fileCount);
-  drawerErrorsEl.textContent = String(run.errorCount);
+  if (drawerV2Ready) {
+    drawerStatusChipEl.className = `state-badge ${token.className}`;
+    drawerStatusChipEl.textContent = `${token.icon} ${run.operationalStatus}`;
+    drawerPhaseChipEl.textContent = `Phase: ${phaseText}`;
+    drawerAttentionChipEl.textContent = `Attention: ${run.needsAttentionSeverity}`;
+    drawerRuntimeEl.textContent = formatDuration(run.runtimeMs);
+    drawerToolsEl.textContent = String(run.toolCount);
+    drawerFilesEl.textContent = String(run.fileCount);
+    drawerErrorsEl.textContent = String(run.errorCount);
+  } else {
+    drawerTaskEl.textContent = `${run.timeline.at(-1)?.summary || "No event captured yet."} | phase=${phaseText} | runtime=${formatDuration(run.runtimeMs)} | tools=${run.toolCount} files=${run.fileCount} errors=${run.errorCount}`;
+  }
   drawerLastSuccessEl.textContent = run.lastSuccessTs ? ageText(run.lastSuccessTs) : "n/a";
   drawerBlockerEl.textContent = blockerLabel(run.blockerClass);
 

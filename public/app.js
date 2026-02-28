@@ -70,18 +70,19 @@ const CITY_ART = {
 const CITY_BUILDING_KEYS = ["building06", "building07", "building08", "building09"];
 const ROTATED_PATTERN_CACHE = new Map();
 const CHARACTER_SPRITE_PATHS_BY_STATE = {
-  active: "/assets/characters/state_active.svg",
-  waiting: "/assets/characters/state_waiting.svg",
-  approval: "/assets/characters/state_approval.svg",
-  blocked: "/assets/characters/state_blocked.svg",
-  loop: "/assets/characters/state_blocked.svg",
-  failed: "/assets/characters/state_failed.svg",
-  done: "/assets/characters/state_done.svg",
+  active: "/assets/characters/active.png",
+  waiting: "/assets/characters/waiting.png",
+  approval: "/assets/characters/needs human.png",
+  blocked: "/assets/characters/blocked.png",
+  loop: "/assets/characters/blocked.png",
+  failed: "/assets/characters/failed.png",
+  done: "/assets/characters/done.png",
 };
 const CHARACTER_SPRITES = {
   byState: {},
   warned: false,
 };
+const SPRITE_BOUNDS_CACHE = new WeakMap();
 const CHARACTER_SHEET = {
   width: 112,
   height: 96,
@@ -1644,6 +1645,42 @@ function spriteFrameForState(visualState, timeSec) {
   return { col: 0, row: baseRow };
 }
 
+function getOpaqueBounds(sprite) {
+  if (!sprite) return null;
+  if (SPRITE_BOUNDS_CACHE.has(sprite)) return SPRITE_BOUNDS_CACHE.get(sprite);
+  const w = sprite.naturalWidth || sprite.width || 0;
+  const h = sprite.naturalHeight || sprite.height || 0;
+  if (w <= 0 || h <= 0) return null;
+
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = w;
+  canvasEl.height = h;
+  const c2d = canvasEl.getContext("2d", { willReadFrequently: true });
+  if (!c2d) return null;
+  c2d.clearRect(0, 0, w, h);
+  c2d.drawImage(sprite, 0, 0);
+  const data = c2d.getImageData(0, 0, w, h).data;
+
+  let minX = w;
+  let minY = h;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const alpha = data[(y * w + x) * 4 + 3];
+      if (alpha <= 4) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  const bounds = maxX >= minX && maxY >= minY ? { sx: minX, sy: minY, sw: maxX - minX + 1, sh: maxY - minY + 1 } : null;
+  SPRITE_BOUNDS_CACHE.set(sprite, bounds);
+  return bounds;
+}
+
 function drawFallbackCharacter(target, x, y, w, h, color = "#dde8f4") {
   drawRoundedRect(target, x + Math.floor(w * 0.34), y + Math.floor(h * 0.06), Math.floor(w * 0.32), Math.floor(h * 0.24), 6, color);
   drawRoundedRect(target, x + Math.floor(w * 0.22), y + Math.floor(h * 0.28), Math.floor(w * 0.56), Math.floor(h * 0.56), 8, color);
@@ -1736,7 +1773,12 @@ function drawAgentActor(target, placement, timeSec) {
       const sy = frame.row * CHARACTER_SHEET.frameH;
       target.drawImage(sprite, sx, sy, CHARACTER_SHEET.frameW, CHARACTER_SHEET.frameH, baseX, baseY, spriteW, spriteH);
     } else {
-      target.drawImage(sprite, baseX, baseY, spriteW, spriteH);
+      const bounds = getOpaqueBounds(sprite);
+      if (bounds) {
+        target.drawImage(sprite, bounds.sx, bounds.sy, bounds.sw, bounds.sh, baseX, baseY, spriteW, spriteH);
+      } else {
+        target.drawImage(sprite, baseX, baseY, spriteW, spriteH);
+      }
     }
   } else {
     drawFallbackCharacter(target, baseX, baseY, spriteW, spriteH, "#dce8f6");

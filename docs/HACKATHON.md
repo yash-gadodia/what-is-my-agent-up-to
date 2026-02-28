@@ -10,7 +10,7 @@ Agent coding sessions are hard to observe live. Teams see long logs but cannot q
 
 ## Solution
 
-Codex Agent Viz SG converts streaming Codex JSON events into a Singapore-themed pixel city with run lanes, timeline inspection, and stuck detection.
+WIMUT converts streaming Codex app-server notifications into a Singapore-themed pixel city with run lanes, timeline inspection, and stuck detection.
 
 ## Why It Matters
 
@@ -31,6 +31,10 @@ The dashboard reports measurable run signals:
 
 This gives a lightweight eval lens without requiring runtime-specific integrations.
 
+## Technical One-Liner
+
+`relay.mjs` drives `codex app-server` (initialize -> thread/start -> turn/start), forwards notifications to `ws://localhost:8787`, and the frontend maps those events into stable operational signals.
+
 ## Two Minute Demo Flow
 
 1. Start `npm run dev` and open `http://localhost:8788`.
@@ -45,5 +49,5 @@ This gives a lightweight eval lens without requiring runtime-specific integratio
 ## Scope Guardrails
 
 - No OpenClaw runtime process integration in this build
-- Input source is Codex JSON events from `ws://localhost:8787`
+- Input source is Codex app-server notifications relayed to `ws://localhost:8787`
 - Mapping is resilient to unknown event types

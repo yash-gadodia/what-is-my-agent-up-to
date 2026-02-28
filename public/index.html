@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>What Is My Agent Up To (WIMUT)</title>
+    <title>What Is My Agent Up To? | Lorong AI Lanes</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="layout">
       <aside class="panel panel-left" aria-label="Runs and connection">
-        <h1>What Is My Agent Up To (WIMUT)</h1>
+        <h1>What Is My Agent Up To?</h1>
         <p id="wsStatus" class="chip">WS: connecting</p>
         <div class="control-group">
           <label class="field">
@@ -40,7 +40,7 @@
         </div>
 
         <section>
-          <h2>Runs and agents</h2>
+          <h2>Lorong lanes (runs)</h2>
           <ul id="runList" class="run-list"></ul>
         </section>
       </aside>
@@ -49,6 +49,7 @@
         <section class="caption-bar" aria-live="polite">
           <div class="caption-main">
             <p id="captionMode" class="caption-pill">Mode: Live</p>
+            <p id="captionLane" class="caption-pill">Lorong: Waiting</p>
             <p id="captionArea" class="caption-pill">Area: Waiting</p>
             <p id="captionState" class="caption-pill">State: Waiting</p>
           </div>
@@ -75,11 +76,12 @@
           <div class="legend-box">
             <p class="story-legend">Legend</p>
             <ul class="legend-list">
-              <li><strong>CBD</strong> = core app and backend work</li>
-              <li><strong>Bugis</strong> = frontend and UI work</li>
-              <li><strong>Jurong</strong> = infra, config, deploy work</li>
-              <li><strong>Changi</strong> = tests and QA work</li>
+              <li><strong>Backend</strong> = core app and backend work</li>
+              <li><strong>Frontend</strong> = frontend and UI work</li>
+              <li><strong>Infra</strong> = infra, config, deploy work</li>
+              <li><strong>Tests</strong> = tests and QA work</li>
               <li><strong>Merlion HQ</strong> = the main agent</li>
+              <li><strong>Lorong lane</strong> = one run or thread street for an agent flow</li>
               <li>Cars = tools running, desk upgrades = file changes, red = errors, fireworks = success</li>
             </ul>
           </div>

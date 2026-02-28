@@ -1,28 +1,37 @@
-# Codex JSON Integration Notes
+# Codex App-Server Integration Notes
+
+## Context
+
+The product goal is operational clarity for live agent runs: quickly explain what the agent is doing, where effort is concentrated, and when intervention is needed.
+
+The integration goal is to keep the visual pipeline stable while Codex runtime event schemas evolve.
 
 ## Current Input Contract
 
-This project consumes Codex JSON events streamed over websocket:
+This project consumes Codex app-server notifications streamed over websocket:
 
 - source: `relay.mjs`
 - websocket: `ws://localhost:8787`
-- relay command: `codex exec --json <prompt>`
+- relay command: `codex app-server --listen ws://127.0.0.1:8791` (spawned by `relay.mjs`)
 
-No runtime-specific APIs are used.
+`relay.mjs` runs as a managed app-server client: it connects to app-server over local WS, issues JSON-RPC `initialize`, `thread/start`, and `turn/start`, then forwards notifications to the frontend WS.
 
 ## Relay Behavior
 
 `relay.mjs`:
 
-1. Spawns Codex CLI in target repo
-2. Reads stdout as JSONL
-3. Parses line by line with safe `JSON.parse`
-4. Broadcasts parsed events to websocket clients
-5. Forwards stderr and lifecycle events (`relay.started`, `codex.exit`)
+1. Spawns `codex app-server` in target repo
+2. Connects to app-server websocket (`ws://127.0.0.1:<app-server-port>`)
+3. Sends JSON-RPC startup requests (`initialize`, `thread/start`, `turn/start`)
+4. Broadcasts app-server notifications (`{ jsonrpc, method, params }`) to UI websocket clients
+5. Emits lifecycle events (`relay.started`, `appserver.connected`, `appserver.error`, `codex.exit`)
+6. Uses `approvalPolicy: "never"` for non-interactive hackathon runs
+
+This keeps demo control simple: one relay command launches a run and starts event streaming immediately.
 
 ## Frontend Mapping Strategy
 
-Raw events can vary by taxonomy and nesting, so `/public/mapping.js` creates stable derived events:
+Raw events can vary by method and payload shape, so `/public/mapping.js` creates stable derived events:
 
 - `step.started`
 - `step.ended`
@@ -34,11 +43,21 @@ Raw events can vary by taxonomy and nesting, so `/public/mapping.js` creates sta
 
 Key mapping choices:
 
-- keeps original raw type string from `type/event/name/kind/status`
+- keeps original raw type string from `method/type/event/name/kind/status`
+- maps app-server methods like `turn/started`, `turn/completed`, `item/started`, `item/completed`, `turn/diff/updated`
 - heuristic tool activity when type includes `turn.started`, `tool`, `exec`, or `run`
 - heuristic errors for `error`, `failed`, `exception`, `timeout`
 - heuristic success for `completed`, `succeeded`, `passed`, `success`
 - file path extraction from direct fields, arrays, and regex fallback
+
+The dashboard logic consumes derived events only, not raw protocol specifics, so the UI behavior stays understandable even when upstream event details shift.
+
+## Fail-Fast Policy
+
+- If app-server cannot start, connect, or respond to startup requests, relay exits non-zero.
+- If app-server websocket closes before turn completion, relay exits non-zero.
+- Unexpected server-initiated JSON-RPC requests are rejected with `Method not supported in non-interactive relay`.
+- No automatic fallback to `codex exec --json`.
 
 ## Optional Ground Truth Diff
 
@@ -54,7 +73,5 @@ The UI can poll this helper around step boundaries to emit additional `file.chan
 Planned expansion path:
 
 - keep the same derived event contract
-- add adapters for richer agent runtimes
-- route adapters into the same visual pipeline
-
-This keeps the dashboard stable while connectors evolve independently.
+- add richer app-server request handling (approvals, tool calls) when needed
+- optionally support dual-source mode (`app-server` + legacy JSON relay) behind a runtime toggle

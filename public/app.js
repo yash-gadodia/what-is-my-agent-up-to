@@ -10,6 +10,17 @@ const DIFF_HELPER_URL = "http://localhost:8790";
 const STORAGE_KEY = "agent-viz-runs-v2";
 const SETTINGS_KEY = "agent-viz-settings-v1";
 const HARDCODED_REPO_PATH = "/Users/yash/Documents/Voltade/Code/openclaw";
+const APP_NAME = "What Is My Agent Up To?";
+const LORONG_STREETS = [
+  "Lorong 1",
+  "Lorong 2",
+  "Lorong 3",
+  "Lorong 4",
+  "Lorong 5",
+  "Lorong 6",
+  "Lorong 7",
+  "Lorong 8",
+];
 
 const WORLD = {
   width: 1280,
@@ -80,6 +91,7 @@ const storyReasonsEl = document.getElementById("storyReasons");
 const storyNextEl = document.getElementById("storyNext");
 const focusModeBtnEl = document.getElementById("focusModeBtn");
 const captionModeEl = document.getElementById("captionMode");
+const captionLaneEl = document.getElementById("captionLane");
 const captionAreaEl = document.getElementById("captionArea");
 const captionStateEl = document.getElementById("captionState");
 const captionStepEl = document.getElementById("captionStep");
@@ -110,6 +122,7 @@ const state = {
   selectedRunId: null,
   activeManualRunId: null,
   manualRunCounter: 0,
+  lorongCounter: 1,
   timelineSelectionByRun: new Map(),
   timelineEventId: 1,
   ws: {
@@ -196,6 +209,13 @@ function districtMeaning(district) {
   if (district === "Jurong") return "Infra / DevOps";
   if (district === "Changi") return "Tests / QA";
   return "Core App / Backend";
+}
+
+function districtLabel(district) {
+  if (district === "Bugis") return "Frontend";
+  if (district === "Jurong") return "Infra";
+  if (district === "Changi") return "Tests";
+  return "Backend";
 }
 
 function prettyState(status, run) {
@@ -291,11 +311,20 @@ function createEmptyNpcState() {
   };
 }
 
-function createRun({ runId, agentId, label, manual = false, simulated = false }) {
+function nextLorongName() {
+  const index = state.lorongCounter;
+  state.lorongCounter += 1;
+  const street = LORONG_STREETS[(index - 1) % LORONG_STREETS.length];
+  if (index <= LORONG_STREETS.length) return street;
+  return `${street} #${Math.ceil(index / LORONG_STREETS.length)}`;
+}
+
+function createRun({ runId, agentId, label, laneName, manual = false, simulated = false }) {
   return {
     runId,
     agentId,
     label,
+    laneName: laneName || nextLorongName(),
     manual,
     simulated,
     status: "idle",
@@ -339,6 +368,7 @@ function createRun({ runId, agentId, label, manual = false, simulated = false })
       uncle: 0,
       mrt: 0,
     },
+    noisyEventAt: new Map(),
     highlight: null,
   };
 }
@@ -348,13 +378,14 @@ function getRunLabelFromIdentity(identity) {
   return `codex:${identity}`;
 }
 
-function ensureRun(runId, { agentId, label, manual = false, simulated = false } = {}) {
+function ensureRun(runId, { agentId, label, laneName, manual = false, simulated = false } = {}) {
   if (state.runs.has(runId)) return state.runs.get(runId);
 
   const run = createRun({
     runId,
     agentId: agentId || `codex:${runId}`,
     label: label || agentId || `codex:${runId}`,
+    laneName: laneName || nextLorongName(),
     manual,
     simulated,
   });
@@ -642,6 +673,7 @@ function persistRunsToStorage() {
         runId: run.runId,
         agentId: run.agentId,
         label: run.label,
+        laneName: run.laneName,
         manual: run.manual,
         simulated: run.simulated,
         createdAt: run.createdAt,
@@ -707,6 +739,7 @@ function restoreRunsFromStorage() {
     const run = ensureRun(item.runId, {
       agentId: item.agentId || `codex:${item.runId}`,
       label: item.label || item.agentId || `codex:${item.runId}`,
+      laneName: item.laneName,
       manual: Boolean(item.manual),
       simulated: Boolean(item.simulated),
     });
@@ -729,6 +762,16 @@ function restoreRunsFromStorage() {
       const parsedManual = Number(run.runId.split(":")[1]);
       if (Number.isFinite(parsedManual)) {
         maxManualId = Math.max(maxManualId, parsedManual);
+      }
+    }
+
+    if (typeof run.laneName === "string") {
+      const match = run.laneName.match(/^Lorong\s+(\d+)/i);
+      if (match) {
+        const parsedLorong = Number(match[1]);
+        if (Number.isFinite(parsedLorong)) {
+          state.lorongCounter = Math.max(state.lorongCounter, parsedLorong + 1);
+        }
       }
     }
   }
@@ -764,7 +807,10 @@ function integrateDerivedSet(run, rawEvent, derivedEvents, options = {}) {
   }
   run.rawEvents.push(rawEvent);
 
-  const record = addTimelineRecord(run, rawEvent, derivedEvents);
+  let record = null;
+  if (!options.skipTimeline) {
+    record = addTimelineRecord(run, rawEvent, derivedEvents);
+  }
 
   for (const derived of derivedEvents) {
     applyDerivedEvent(run, derived, { transient });
@@ -772,7 +818,7 @@ function integrateDerivedSet(run, rawEvent, derivedEvents, options = {}) {
 
   evaluateStuck(run);
 
-  if (run.stuckScore > 0.7 && transient) {
+  if (run.stuckScore > 0.7 && transient && record) {
     run.highlight = {
       district: record.district,
       filePath: record.filePath,
@@ -785,6 +831,29 @@ function integrateDerivedSet(run, rawEvent, derivedEvents, options = {}) {
   }
 
   return record;
+}
+
+function noisyMethodThrottleKey(rawEvent) {
+  const method = String(rawEvent?.method || "").toLowerCase();
+  if (!method) return null;
+
+  if (method === "item/commandexecution/outputdelta") return method;
+  if (method === "item/agentmessage/delta") return method;
+  if (method.startsWith("item/reasoning/")) return method;
+  return null;
+}
+
+function shouldThrottleNoisyEvent(run, rawEvent) {
+  const key = noisyMethodThrottleKey(rawEvent);
+  if (!key) return false;
+
+  const now = nowMs();
+  const last = run.noisyEventAt.get(key) || 0;
+  const throttleMs = key === "item/agentmessage/delta" ? 700 : 500;
+  if (now - last < throttleMs) return true;
+
+  run.noisyEventAt.set(key, now);
+  return false;
 }
 
 function shouldPollGitDiff(run, derivedEvents, source) {
@@ -859,10 +928,12 @@ async function pollGitDiffForRun(run) {
 
 function integrateRawEvent(run, rawEvent, options = {}) {
   const source = options.source || "ws";
+  const skipTimeline = shouldThrottleNoisyEvent(run, rawEvent);
   const derivedEvents = mapCodexToVizEvents(rawEvent);
   const record = integrateDerivedSet(run, rawEvent, derivedEvents, {
     transient: options.transient !== false,
     skipPersistence: options.skipPersistence === true,
+    skipTimeline,
   });
 
   if (shouldPollGitDiff(run, derivedEvents, source) && options.allowGitDiff !== false) {
@@ -1141,7 +1212,7 @@ function drawDistrictRoom(target, name, district) {
   drawPlant(target, px + 8, py + h - 24);
   drawPlant(target, px + w - 22, py + h - 24);
 
-  drawText(target, name, px + 8, py + 18, "#f8f3df", 13);
+  drawText(target, districtLabel(name), px + 8, py + 18, "#f8f3df", 13);
   drawText(target, districtMeaning(name), px + 8, py + 32, "#fff1c8", 9);
 }
 
@@ -1374,7 +1445,7 @@ function renderRunList() {
     top.className = "run-top";
 
     const title = document.createElement("span");
-    title.textContent = run.label;
+    title.textContent = `${run.laneName} | ${run.label}`;
 
     const status = document.createElement("span");
     status.className = `status-pill ${statusClass(run.status)}`;
@@ -1473,7 +1544,7 @@ function renderInspector() {
   }
 
   const derivedLine = record.derived.map((item) => item.kind).join(", ");
-  inspectorSummaryEl.textContent = `${record.summary} | district: ${record.district} | derived: ${derivedLine}`;
+  inspectorSummaryEl.textContent = `${record.summary} | area: ${districtLabel(record.district)} | derived: ${derivedLine}`;
   inspectorRawEl.textContent = JSON.stringify(record.rawEvent, null, 2);
 }
 
@@ -1503,16 +1574,16 @@ function renderWsStatus() {
 function renderRunBadge() {
   const run = getActiveRunForView();
   if (!run) {
-    runBadgeEl.textContent = "WIMUT | no run selected";
+    runBadgeEl.textContent = `${APP_NAME} | no run selected`;
     return;
   }
 
   if (state.replay.active && state.replay.sourceRunId) {
-    runBadgeEl.textContent = `WIMUT | ${run.label} | Replay mode`;
+    runBadgeEl.textContent = `${APP_NAME} | ${run.laneName} | ${run.label} | Replay mode`;
     return;
   }
 
-  runBadgeEl.textContent = `WIMUT | ${run.label} | Live mode`;
+  runBadgeEl.textContent = `${APP_NAME} | ${run.laneName} | ${run.label} | Live mode`;
 }
 
 function buildStoryForRun(run) {
@@ -1538,11 +1609,12 @@ function buildStoryForRun(run) {
   const latestSummary = latest ? latest.summary : "No event captured yet";
   const latestType = latest ? latest.rawType : "none";
   const latestDistrict = latest ? latest.district : "CBD";
+  const latestDistrictLabel = districtLabel(latestDistrict);
   const latestFile = latest?.filePath || "none";
 
   const sharedReasons = [
     `Latest event: ${latestType} (${latestSummary})`,
-    `Current area: ${latestDistrict} (${districtMeaning(latestDistrict)})`,
+    `Current area: ${latestDistrictLabel} (${districtMeaning(latestDistrict)})`,
     `Current file: ${latestFile}`,
     `Last file change: ${ageText(run.lastFileChangeAt)}`,
     `Last tool activity: ${ageText(run.lastToolAt)}`,
@@ -1560,7 +1632,7 @@ function buildStoryForRun(run) {
         `Failure streak is ${run.failureStreak} without a recovery success.`,
         ...sharedReasons,
       ],
-      nextAction: `Next: ${run.intervention}. Focus on ${latestDistrict} and the latest failing file.`,
+      nextAction: `Next: ${run.intervention}. Focus on ${latestDistrictLabel} and the latest failing file.`,
     };
   }
 
@@ -1582,8 +1654,8 @@ function buildStoryForRun(run) {
       ],
       nextAction:
         run.toolCount > run.fileCount
-          ? `Next: ask agent to make one concrete change in ${latestDistrict} before more exploration.`
-          : `Next: keep current flow and verify with one focused test in ${latestDistrict}.`,
+          ? `Next: ask agent to make one concrete change in ${latestDistrictLabel} before more exploration.`
+          : `Next: keep current flow and verify with one focused test in ${latestDistrictLabel}.`,
     };
   }
 
@@ -1599,7 +1671,7 @@ function buildStoryForRun(run) {
         `Run finished with ${run.successCount} success signals and ${run.errorCount} errors.`,
         ...sharedReasons,
       ],
-      nextAction: `Next: export replay JSONL or start a new run. Last active area was ${latestDistrict}.`,
+      nextAction: `Next: export replay JSONL or start a new run. Last active area was ${latestDistrictLabel}.`,
     };
   }
 
@@ -1614,7 +1686,7 @@ function buildStoryForRun(run) {
       "Run may be awaiting a new prompt or user instruction.",
       ...sharedReasons,
     ],
-    nextAction: `Next: send a new prompt or trigger New Run. The last known area was ${latestDistrict}.`,
+    nextAction: `Next: send a new prompt or trigger New Run. The last known area was ${latestDistrictLabel}.`,
   };
 }
 
@@ -1642,6 +1714,7 @@ function renderCaptionBar() {
 
   if (!run) {
     captionModeEl.textContent = `Mode: ${mode}`;
+    captionLaneEl.textContent = "Lorong: Waiting";
     captionAreaEl.textContent = "Area: Waiting";
     captionStateEl.textContent = "State: Waiting";
     captionStepEl.textContent = "Current step: Waiting for first event.";
@@ -1651,11 +1724,13 @@ function renderCaptionBar() {
 
   const latest = run.timeline[run.timeline.length - 1] || null;
   const latestDistrict = latest?.district || "CBD";
+  const latestDistrictLabel = districtLabel(latestDistrict);
   const latestFile = latest?.filePath || "none";
   const latestSummary = latest?.summary || "No event captured yet";
 
   captionModeEl.textContent = `Mode: ${mode}`;
-  captionAreaEl.textContent = `Area: ${latestDistrict} (${districtMeaning(latestDistrict)})`;
+  captionLaneEl.textContent = `Lorong: ${run.laneName}`;
+  captionAreaEl.textContent = `Area: ${latestDistrictLabel} (${districtMeaning(latestDistrict)})`;
   captionStateEl.textContent = `State: ${prettyState(run.status, run)}`;
   captionStepEl.textContent = `Current step: ${latestSummary}`;
   captionFileEl.textContent = `Current file: ${latestFile}`;

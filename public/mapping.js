@@ -24,6 +24,13 @@ const MESSAGE_KEYS = [
   "description",
 ];
 const TOOL_KEYS = ["tool", "tool_name", "toolName", "name", "title"];
+const SWARM_NOISY_METHODS = new Set([
+  "codex/event/token_count",
+  "thread/tokenusage/updated",
+  "account/ratelimits/updated",
+  "item/agentmessage/delta",
+  "item/commandexecution/outputdelta",
+]);
 const RUN_KEYS = [
   "threadId",
   "thread_id",
@@ -272,24 +279,30 @@ function dedupeDerived(events) {
   return out;
 }
 
-export function mapCodexToVizEvents(rawEvent) {
-  const ts = getRawEventTimestamp(rawEvent);
-  const rawType = getRawEventType(rawEvent);
-  const rawTypeLower = toLowerText(rawType);
-  const method = toLowerText(rawEvent?.method || "");
-  const blob = safeStringify(rawEvent);
-  const blobLower = blob.toLowerCase();
-  const combinedLower = `${rawTypeLower} ${method} ${blobLower}`;
-  const message = extractMessage(rawEvent);
-  const toolName = extractToolName(rawEvent, combinedLower);
-  const filePaths = extractFilePaths(rawEvent);
+function isDiffUpdateMethod(method) {
+  return method === "item/filechange/outputdelta" || method === "turn/diff/updated";
+}
 
-  const derived = [];
-  const base = {
-    ts,
+function isSwarmNoisyMethod(method) {
+  if (!method) return false;
+  if (SWARM_NOISY_METHODS.has(method)) return true;
+  const isDeltaSuffix = method.endsWith("/delta") || method.endsWith("_delta");
+  return isDeltaSuffix && method !== "item/filechange/outputdelta";
+}
+
+function applyMethodRules(context) {
+  const {
+    method,
+    rawEvent,
     rawType,
-  };
-  const push = (event) => derived.push(decorateDerivedEvent({ ...base, ...event }));
+    message,
+    toolName,
+    filePaths,
+    base,
+    push,
+    pushErrorEvent,
+    derived,
+  } = context;
 
   if (method === "turn/started") {
     push({
@@ -316,12 +329,7 @@ export function mapCodexToVizEvents(rawEvent) {
   if (method === "item/completed") {
     const statusBlob = toLowerText(safeStringify(rawEvent?.params?.item || rawEvent?.params || rawEvent));
     if (/(failed|failure|error|declined|aborted|timeout)/.test(statusBlob)) {
-      const errorMessage = message || "Item failed";
-      push({
-        kind: "error",
-        message: errorMessage,
-        signature: makeErrorSignature(errorMessage),
-      });
+      pushErrorEvent(message || "Item failed");
     } else if (/(completed|success|succeeded|passed)/.test(statusBlob)) {
       push({
         kind: "success",
@@ -330,27 +338,32 @@ export function mapCodexToVizEvents(rawEvent) {
     }
   }
 
-  if (method === "item/filechange/outputdelta" || method === "turn/diff/updated") {
+  if (isDiffUpdateMethod(method)) {
     pushFileEvents(derived, base, filePaths, message || rawType);
   }
 
   if (method === "error") {
-    const errorMessage = message || rawType || "Error event";
-    push({
-      kind: "error",
-      message: errorMessage,
-      signature: makeErrorSignature(errorMessage),
-    });
+    pushErrorEvent(message || rawType || "Error event");
   }
+}
 
-  if (/(turn\.started|turn_started|step\.started|step_started|run\.started|session\.started|conversation\.started|agent\.started)/.test(rawTypeLower)) {
+function applyRawTypeRules({ rawTypeLower, rawType, message, toolName, push }) {
+  if (
+    /(turn\.started|turn_started|step\.started|step_started|run\.started|session\.started|conversation\.started|agent\.started)/.test(
+      rawTypeLower
+    )
+  ) {
     push({
       kind: "step.started",
       message: message || "Step started",
     });
   }
 
-  if (/(turn\.ended|turn\.completed|turn\.finished|step\.ended|step\.completed|run\.ended|run\.completed|session\.ended|agent\.completed|finished|done)/.test(rawTypeLower)) {
+  if (
+    /(turn\.ended|turn\.completed|turn\.finished|step\.ended|step\.completed|run\.ended|run\.completed|session\.ended|agent\.completed|finished|done)/.test(
+      rawTypeLower
+    )
+  ) {
     push({
       kind: "step.ended",
       message: message || "Step ended",
@@ -364,14 +377,13 @@ export function mapCodexToVizEvents(rawEvent) {
       message: message || rawType,
     });
   }
+}
+
+function applyCombinedTextRules(context) {
+  const { combinedLower, message, rawType, push, pushErrorEvent } = context;
 
   if (/(error|failed|failure|exception|fatal|timeout)/.test(combinedLower)) {
-    const errorMessage = message || rawType || "Error event";
-    push({
-      kind: "error",
-      message: errorMessage,
-      signature: makeErrorSignature(errorMessage),
-    });
+    pushErrorEvent(message || rawType || "Error event");
   }
 
   if (/(completed|succeeded|passed|success)/.test(combinedLower)) {
@@ -394,8 +406,61 @@ export function mapCodexToVizEvents(rawEvent) {
       message: message || "Run appears stalled",
     });
   }
+}
 
-  if (!(method === "item/filechange/outputdelta" || method === "turn/diff/updated")) {
+export function mapCodexToVizEvents(rawEvent) {
+  const ts = getRawEventTimestamp(rawEvent);
+  const rawType = getRawEventType(rawEvent);
+  const rawTypeLower = toLowerText(rawType);
+  const method = toLowerText(rawEvent?.method || "");
+  const isSwarmEvent = Boolean(rawEvent?.swarm && typeof rawEvent.swarm === "object");
+  if (isSwarmEvent && isSwarmNoisyMethod(method)) {
+    return [];
+  }
+  const blob = safeStringify(rawEvent);
+  const blobLower = blob.toLowerCase();
+  const combinedLower = `${rawTypeLower} ${method} ${blobLower}`;
+  const message = extractMessage(rawEvent);
+  const toolName = extractToolName(rawEvent, combinedLower);
+  const filePaths = extractFilePaths(rawEvent);
+
+  const derived = [];
+  const base = {
+    ts,
+    rawType,
+  };
+  const push = (event) => derived.push(decorateDerivedEvent({ ...base, ...event }));
+  const pushErrorEvent = (errorMessage) =>
+    push({
+      kind: "error",
+      message: errorMessage,
+      signature: makeErrorSignature(errorMessage),
+    });
+
+  applyMethodRules({
+    method,
+    rawEvent,
+    rawType,
+    message,
+    toolName,
+    filePaths,
+    base,
+    push,
+    pushErrorEvent,
+    derived,
+  });
+
+  applyRawTypeRules({ rawTypeLower, rawType, message, toolName, push });
+
+  applyCombinedTextRules({
+    combinedLower,
+    message,
+    rawType,
+    push,
+    pushErrorEvent,
+  });
+
+  if (!isDiffUpdateMethod(method)) {
     pushFileEvents(derived, base, filePaths, message || rawType);
   }
 

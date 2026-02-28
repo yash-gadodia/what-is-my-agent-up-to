@@ -27,10 +27,26 @@ const publicPort = Math.max(1, Number(arg("--port", process.env.PORT || "8787"))
 const host = process.env.HOST || "0.0.0.0";
 const relayBasePort = Math.max(1025, Number(arg("--relay-base-port", "9800")) || 9800);
 const appServerBasePort = Math.max(1025, Number(arg("--appserver-base-port", "11800")) || 11800);
-const staggerMs = Math.max(0, Number(arg("--stagger-ms", "1200")) || 1200);
-const restartDelayMs = Math.max(0, Number(arg("--restart-delay-ms", "1500")) || 1500);
+const staggerMs = Math.max(0, Number(arg("--stagger-ms", "2400")) || 2400);
+const restartDelayMs = Math.max(0, Number(arg("--restart-delay-ms", "10000")) || 10000);
 const continuous = /^(1|true|yes|on)$/i.test(String(arg("--continuous", "false")));
 const prompts = args("--prompt");
+const NON_CRITICAL_EMIT_GAP_MS = 850;
+const FILE_DELTA_COALESCE_MS = 1000;
+const FILE_REGEX = /([\w./-]+\.(?:ts|js|mjs|cjs|jsx|tsx|py|go|java|rs|md|json|yml|yaml|toml|sql))/gi;
+const NOISY_METHODS = new Set([
+  "codex/event/token_count",
+  "thread/tokenusage/updated",
+  "account/ratelimits/updated",
+  "item/agentmessage/delta",
+  "item/commandexecution/outputdelta",
+]);
+const RELAY_LIFECYCLE_TYPES = new Set([
+  "relay.started",
+  "appserver.connected",
+  "appserver.error",
+  "codex.exit",
+]);
 
 function repoFor(index) {
   return path.resolve(repoArgs[index] || defaultRepo);
@@ -83,6 +99,7 @@ const childrenByAgent = new Map();
 const upstreamByAgent = new Map();
 const cyclesByAgent = new Map();
 const restartTimers = new Set();
+const pacingStateByAgent = new Map();
 let stopping = false;
 
 function wait(ms) {
@@ -138,6 +155,243 @@ function safeJson(raw) {
   }
 }
 
+function clearTimer(timer, timerSet = restartTimers) {
+  if (!timer) return;
+  clearTimeout(timer);
+  timerSet.delete(timer);
+}
+
+function toLower(value) {
+  return String(value || "").toLowerCase();
+}
+
+function methodOf(event) {
+  return toLower(event?.method);
+}
+
+function isNoisyMethod(method) {
+  if (!method) return false;
+  if (NOISY_METHODS.has(method)) return true;
+  const isDeltaSuffix = method.endsWith("/delta") || method.endsWith("_delta");
+  return isDeltaSuffix && method !== "item/filechange/outputdelta";
+}
+
+function isRelayLifecycleEvent(event) {
+  return RELAY_LIFECYCLE_TYPES.has(String(event?.type || ""));
+}
+
+function eventBlobLower(event) {
+  try {
+    return JSON.stringify(event).toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function extractFilePaths(event) {
+  const found = new Set();
+  const params = event?.params && typeof event.params === "object" ? event.params : {};
+
+  const direct = [
+    event?.path,
+    event?.file,
+    event?.filePath,
+    params?.path,
+    params?.file,
+    params?.filePath,
+    params?.item?.path,
+    params?.item?.file,
+    params?.delta?.path,
+    params?.delta?.file,
+  ];
+
+  for (const value of direct) {
+    if (typeof value === "string" && /\.[a-z0-9]+$/i.test(value)) found.add(value);
+  }
+
+  const lists = [
+    event?.files,
+    event?.paths,
+    params?.files,
+    params?.paths,
+    params?.delta?.files,
+    params?.turn?.diff?.files,
+    params?.turn?.changedFiles,
+  ];
+
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (typeof item === "string" && /\.[a-z0-9]+$/i.test(item)) {
+        found.add(item);
+      } else if (item && typeof item === "object") {
+        if (typeof item.path === "string") found.add(item.path);
+        if (typeof item.file === "string") found.add(item.file);
+        if (typeof item.filePath === "string") found.add(item.filePath);
+      }
+    }
+  }
+
+  const text = eventBlobLower(event);
+  FILE_REGEX.lastIndex = 0;
+  let match;
+  while ((match = FILE_REGEX.exec(text)) !== null) {
+    found.add(match[1]);
+  }
+
+  return Array.from(found);
+}
+
+function isCriticalNotification(event) {
+  const method = methodOf(event);
+  if (!method) return false;
+  if (method === "turn/started" || method === "turn/completed" || method === "error") return true;
+
+  const blobLower = eventBlobLower(event);
+  if (/(approval|approve|awaiting user|needs user input|human input|manual gate|waiting for user|review)/.test(blobLower)) {
+    return true;
+  }
+
+  if (method === "item/completed") {
+    return /(failed|failure|error|declined|aborted|timeout)/.test(blobLower);
+  }
+
+  return false;
+}
+
+function isFileDeltaMethod(method) {
+  return method === "item/filechange/outputdelta" || method === "turn/diff/updated";
+}
+
+function getPacingState(agentTag) {
+  if (pacingStateByAgent.has(agentTag)) return pacingStateByAgent.get(agentTag);
+  const state = {
+    lastEmitAt: 0,
+    pendingEvent: null,
+    pendingEventTimer: null,
+    pendingFileTemplate: null,
+    pendingFilePaths: new Set(),
+    pendingFileTimer: null,
+  };
+  pacingStateByAgent.set(agentTag, state);
+  return state;
+}
+
+function clearPacingState(agentTag) {
+  const state = pacingStateByAgent.get(agentTag);
+  if (!state) return;
+  clearTimer(state.pendingEventTimer, restartTimers);
+  clearTimer(state.pendingFileTimer, restartTimers);
+  pacingStateByAgent.delete(agentTag);
+}
+
+function emitNow(agentTag, event) {
+  const state = getPacingState(agentTag);
+  state.lastEmitAt = Date.now();
+  broadcast(event);
+}
+
+function schedulePendingEvent(agentTag, state) {
+  if (state.pendingEventTimer || !state.pendingEvent) return;
+  const elapsed = Date.now() - state.lastEmitAt;
+  const delay = Math.max(0, NON_CRITICAL_EMIT_GAP_MS - elapsed);
+  const timer = setTimeout(() => {
+    restartTimers.delete(timer);
+    state.pendingEventTimer = null;
+    if (!state.pendingEvent) return;
+    const next = state.pendingEvent;
+    state.pendingEvent = null;
+    emitNow(agentTag, next);
+  }, delay);
+  state.pendingEventTimer = timer;
+  restartTimers.add(timer);
+}
+
+function emitPaced(agentTag, event) {
+  const state = getPacingState(agentTag);
+  const elapsed = Date.now() - state.lastEmitAt;
+  if (!state.pendingEvent && elapsed >= NON_CRITICAL_EMIT_GAP_MS) {
+    emitNow(agentTag, event);
+    return;
+  }
+  state.pendingEvent = event;
+  schedulePendingEvent(agentTag, state);
+}
+
+function emitCoalescedFileDelta(agentTag) {
+  const state = getPacingState(agentTag);
+  if (!state.pendingFileTemplate) return;
+
+  const filePaths = Array.from(state.pendingFilePaths);
+  state.pendingFilePaths.clear();
+  const template = state.pendingFileTemplate;
+  state.pendingFileTemplate = null;
+
+  const out = {
+    ...template,
+    params: {
+      ...(template.params && typeof template.params === "object" ? template.params : {}),
+    },
+  };
+
+  if (filePaths.length > 0) {
+    out.params.files = filePaths;
+    if (!out.params.path) out.params.path = filePaths[0];
+  }
+
+  emitPaced(agentTag, out);
+}
+
+function queueFileDelta(agentTag, event) {
+  const state = getPacingState(agentTag);
+  state.pendingFileTemplate = event;
+  for (const filePath of extractFilePaths(event)) {
+    state.pendingFilePaths.add(filePath);
+  }
+  if (state.pendingFileTimer) return;
+
+  const timer = setTimeout(() => {
+    restartTimers.delete(timer);
+    state.pendingFileTimer = null;
+    emitCoalescedFileDelta(agentTag);
+  }, FILE_DELTA_COALESCE_MS);
+
+  state.pendingFileTimer = timer;
+  restartTimers.add(timer);
+}
+
+function emitCritical(agentTag, event) {
+  const state = getPacingState(agentTag);
+  state.pendingEvent = null;
+  clearTimer(state.pendingEventTimer, restartTimers);
+  state.pendingEventTimer = null;
+  emitNow(agentTag, event);
+}
+
+function shapeAndBroadcast(agentTag, event) {
+  const method = methodOf(event);
+  if (!method) {
+    if (isRelayLifecycleEvent(event)) {
+      broadcast(event);
+    }
+    return;
+  }
+
+  if (isNoisyMethod(method)) return;
+
+  if (isFileDeltaMethod(method)) {
+    queueFileDelta(agentTag, event);
+    return;
+  }
+
+  if (isCriticalNotification(event)) {
+    emitCritical(agentTag, event);
+    return;
+  }
+
+  emitPaced(agentTag, event);
+}
+
 async function startAgent(index) {
   const agentIndex = index + 1;
   const agentTag = `agent-${agentIndex}`;
@@ -147,6 +401,7 @@ async function startAgent(index) {
   const prompt = promptFor(index);
   const cycle = (cyclesByAgent.get(agentTag) || 0) + 1;
   cyclesByAgent.set(agentTag, cycle);
+  clearPacingState(agentTag);
 
   const previousUpstream = upstreamByAgent.get(agentTag);
   if (previousUpstream) {
@@ -211,6 +466,7 @@ async function startAgent(index) {
     if (current === child) {
       childrenByAgent.delete(agentTag);
     }
+    clearPacingState(agentTag);
 
     broadcast({
       type: "swarm.child.exit",
@@ -261,10 +517,11 @@ async function startAgent(index) {
       parsed.params.run_id = agentTag;
     }
 
-    broadcast(parsed);
+    shapeAndBroadcast(agentTag, parsed);
   });
 
   upstream.on("close", () => {
+    clearPacingState(agentTag);
     broadcast({
       type: "swarm.upstream.closed",
       ts: Date.now(),
@@ -319,6 +576,10 @@ function shutdown(code = 0) {
     clearTimeout(timer);
   }
   restartTimers.clear();
+
+  for (const agentTag of pacingStateByAgent.keys()) {
+    clearPacingState(agentTag);
+  }
 
   for (const ws of upstreamByAgent.values()) {
     try {

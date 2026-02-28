@@ -83,9 +83,11 @@ Street rendering uses pixel-art textures from `/public/assets/city/*` with verti
 
 - `server.mjs`: static web server for the UI on `http://localhost:8788`
 - `relay.mjs`: Codex app-server harness and websocket broadcaster on `ws://localhost:8787`
+- `relay-message.mjs`: websocket payload decoding + JSON-RPC message classification shared by relay/swarm
 - `helper.mjs`: optional git diff API on `http://localhost:8790`
 - `public/mapping.js`: event normalization and derived signal mapping
 - `public/app.js`: runtime state machine, rendering, replay, and UX logic
+- `test/relay-message.test.mjs`: parser/classifier regression tests for relay payload handling
 
 ## Event Flow (Harness)
 
@@ -99,6 +101,7 @@ Street rendering uses pixel-art textures from `/public/assets/city/*` with verti
 
 ```bash
 npm install
+npm test
 npm run dev
 ```
 
@@ -124,6 +127,19 @@ Optional git diff helper:
 npm run helper
 ```
 
+Reproducible local smoke flow:
+
+```bash
+# terminal 1
+npm run dev
+
+# terminal 2
+npm run relay -- --repo /abs/path/to/target/repo --prompt "Run tests and fix the first failure"
+
+# optional terminal 3
+npm run helper
+```
+
 Then in the UI:
 
 1. Confirm top summary connection chip reaches `Connected` (or use `Reconnect` in `Ops -> Dev tools`)
@@ -143,11 +159,15 @@ Open the UI against swarm:
 
 - [http://localhost:8788/?ws=ws://localhost:8899](http://localhost:8788/?ws=ws://localhost:8899)
 
-For judge-friendly local demo inside the UI:
+Swarm now runs in **Cinematic Judge Mode (default)**:
 
-- click `Sim calm swarm` for a slow, readable 5-agent lane walkthrough
-- one primary active agent per cycle, occasional secondary activity
-- low error rate to avoid visual overload
+- balanced filtering drops noisy telemetry deltas (`token_count`, rate-limit updates, generic delta spam)
+- per-agent pacing/coalescing keeps non-critical updates readable instead of jittery
+- file-change deltas are coalesced into cleaner, deduped updates
+- replay/export from swarm uses this filtered stream by design
+- default cadence is slower for readability (`--stagger-ms 2400`, `--restart-delay-ms 10000` when omitted)
+
+Raw behavior remains available through single relay mode (`ws://localhost:8787`).
 
 ## Railway Auto Redeploy On Push
 
@@ -166,6 +186,9 @@ Required GitHub repository secrets:
 
 ## Troubleshooting
 
+- `localhost:8788` shows connection refused
+  - confirm `npm run dev` is running
+  - check for conflicting listeners on `8788`
 - WebSocket stuck on reconnecting
   - confirm relay is running on `ws://localhost:8787`
   - confirm app-server port `8791` is free (or set `--app-server-port`)
@@ -178,6 +201,9 @@ Required GitHub repository secrets:
   - verify prompt is passed in relay command
   - inspect timeline raw payloads in the inspector
   - run simulator pack to validate render path
+- Swarm feels too fast or chaotic
+  - use swarm websocket URL (`?ws=ws://localhost:8899`) so cinematic shaping applies
+  - cinematic mode is default for swarm; single-relay (`8787`) is intentionally raw
 - Events arrive but city does not react
   - inspect timeline and raw JSON in inspector
   - tune mapping logic in `/public/mapping.js`
@@ -190,11 +216,13 @@ Required GitHub repository secrets:
 ## Repo File Map
 
 - `/relay.mjs` Codex app-server relay (JSON-RPC client) to websocket
+- `/relay-message.mjs` shared websocket payload decode + JSON-RPC message classification
 - `/swarm.mjs` multi-agent relay orchestrator for concurrent testing
 - `/server.mjs` static server for `/public` on `8788`
 - `/helper.mjs` optional git diff helper on `8790`
 - `/public/mapping.js` raw event/notification to derived visual events
 - `/public/app.js` runtime, city rendering, lanes, replay, simulator
+- `/test/relay-message.test.mjs` regression tests for websocket payload handling
 - `/docs/OPERATORS.md` operator workflow and runbook notes
 - `/docs/SOUL.md` design and product principles
 - `/docs/OPENAI.md` Codex app-server integration notes

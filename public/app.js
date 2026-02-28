@@ -13,6 +13,7 @@ const STORAGE_KEY = "agent-viz-runs-v3";
 const SETTINGS_KEY = "agent-viz-settings-v3";
 const APP_NAME = "Lorong AI x Codex Mission Room";
 const WORLD = { width: 1280, height: 720 };
+const SWARM_PHASE_DWELL_MS = 2200;
 
 const PHASE_COLUMNS = [
   { id: "plan", street: "Planning Street", emoji: "🗺", color: "#5f91e6", accent: "#dbe8ff" },
@@ -203,6 +204,7 @@ const state = {
     cityArtEnabled: true,
     keyboardFocusIndex: 0,
     actorRects: [],
+    overlaySignature: "",
   },
   simulatorTimers: [],
   persistTimer: null,
@@ -381,6 +383,34 @@ function inferPhaseForDerived(derived) {
   return inferPhaseFromText(parts) || "execute";
 }
 
+function isCriticalPhaseChangeEvent(derived) {
+  if (!derived) return false;
+  if (derived.kind === "error" || derived.kind === "human.gate" || derived.kind === "step.ended") return true;
+  const text = `${derived.rawType || ""} ${derived.message || ""}`.toLowerCase();
+  return /(error|failed|failure|exception|fatal|timeout|approval|awaiting user|needs user input|human input|manual gate)/.test(text);
+}
+
+function applyPhaseForDerived(run, derived, ts, isSwarmEvent) {
+  const nextPhase = inferPhaseForDerived(derived);
+  if (!nextPhase) return;
+
+  if (!run.lastPhaseChangeAt) {
+    run.currentPhase = nextPhase;
+    run.lastPhaseChangeAt = ts;
+    return;
+  }
+
+  if (run.currentPhase === nextPhase) return;
+
+  if (isSwarmEvent && !isCriticalPhaseChangeEvent(derived)) {
+    const elapsed = ts - run.lastPhaseChangeAt;
+    if (elapsed < SWARM_PHASE_DWELL_MS) return;
+  }
+
+  run.currentPhase = nextPhase;
+  run.lastPhaseChangeAt = ts;
+}
+
 function inferNeedsAttentionSeverity(run) {
   if (!run) return "none";
   if (run.operationalStatus === "failed" || run.operationalStatus === "loop" || run.operationalStatus === "blocked") {
@@ -414,8 +444,10 @@ function createRun({ runId, agentId, label, laneName, manual = false, simulated 
     laneName: laneName || nextLorongName(),
     manual,
     simulated,
+    isSwarm: false,
     status: "idle",
     currentPhase: "execute",
+    lastPhaseChangeAt: 0,
     blocked: false,
     blockedReason: "",
     needsAttentionSeverity: "none",
@@ -617,11 +649,12 @@ function pushAlert(run, derived, ts) {
   if (run.alertFeed.length > 120) run.alertFeed.shift();
 }
 
-function applyDerivedEvent(run, derived) {
+function applyDerivedEvent(run, derived, options = {}) {
   const ts = derived.ts || nowMs();
   const text = `${derived.rawType || ""} ${derived.message || ""}`.toLowerCase();
+  const isSwarmEvent = Boolean(options.isSwarmEvent || run.isSwarm);
 
-  run.currentPhase = inferPhaseForDerived(derived);
+  applyPhaseForDerived(run, derived, ts, isSwarmEvent);
   if (run.firstTs === null) run.firstTs = ts;
   run.lastTs = Math.max(run.lastTs || 0, ts);
 
@@ -694,10 +727,11 @@ function applyDerivedEvent(run, derived) {
 function integrateDerivedSet(run, rawEvent, derivedEvents, options = {}) {
   if (run.rawEvents.length > 4000) run.rawEvents.shift();
   run.rawEvents.push(rawEvent);
+  run.isSwarm = run.isSwarm || Boolean(rawEvent?.swarm);
 
   addTimelineRecord(run, rawEvent, derivedEvents);
   for (const derived of derivedEvents) {
-    applyDerivedEvent(run, derived);
+    applyDerivedEvent(run, derived, { isSwarmEvent: Boolean(rawEvent?.swarm) });
   }
 
   if (!options.skipPersistence) queuePersistence();
@@ -705,8 +739,9 @@ function integrateDerivedSet(run, rawEvent, derivedEvents, options = {}) {
 
 function ingestRawEvent(rawEvent, options = {}) {
   if (!rawEvent || typeof rawEvent !== "object") return;
-  const run = pickRunForRawEvent(rawEvent, options.forceRunId || null);
   const derivedEvents = mapCodexToVizEvents(rawEvent);
+  if (derivedEvents.length === 0) return;
+  const run = pickRunForRawEvent(rawEvent, options.forceRunId || null);
   integrateDerivedSet(run, rawEvent, derivedEvents, { skipPersistence: options.skipPersistence === true });
   if (!state.selectedRunId) state.selectedRunId = run.runId;
   updateAllDerived();
@@ -1561,11 +1596,20 @@ function drawMap() {
 }
 
 function renderMapOverlay() {
-  mapOverlayEl.innerHTML = "";
   const scaleX = canvas.clientWidth / WORLD.width;
   const scaleY = canvas.clientHeight / WORLD.height;
+  const actorRects = state.ui.actorRects;
+  let signature = `${actorRects.length}|${Math.round(scaleX * 1000)}|${Math.round(scaleY * 1000)}|${state.ui.keyboardFocusIndex}`;
+  for (let i = 0; i < actorRects.length; i += 1) {
+    const actor = actorRects[i];
+    signature += `|${actor.run.runId}:${actor.run.label}:${actor.run.operationalStatus}:${actor.phase}:${actor.clusterCount}:${actor.memberRunIds.length}:${actor.x},${actor.y},${actor.w},${actor.h}`;
+  }
+  if (signature === state.ui.overlaySignature) return;
+  state.ui.overlaySignature = signature;
 
-  state.ui.actorRects.forEach((actor, index) => {
+  mapOverlayEl.innerHTML = "";
+
+  actorRects.forEach((actor, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "map-tile-hit";
@@ -1598,6 +1642,7 @@ function renderMapOverlay() {
       } else {
         state.ui.keyboardFocusIndex = (index - 1 + total) % total;
       }
+      state.ui.overlaySignature = "";
       renderMapOverlay();
       const next = mapOverlayEl.querySelectorAll(".map-tile-hit")[state.ui.keyboardFocusIndex];
       next?.focus();
@@ -2256,7 +2301,10 @@ function setupEventHandlers() {
     importRunInputEl.value = "";
   });
 
-  window.addEventListener("resize", () => renderMapOverlay());
+  window.addEventListener("resize", () => {
+    state.ui.overlaySignature = "";
+    renderMapOverlay();
+  });
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (state.ui.agentDrawerOpen) setAgentDrawerOpen(false);

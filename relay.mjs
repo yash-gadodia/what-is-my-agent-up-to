@@ -3,6 +3,7 @@ import process from "node:process";
 import path from "node:path";
 import fs from "node:fs";
 import { WebSocket, WebSocketServer } from "ws";
+import { classifyJsonRpcMessage, parseAppServerPayload } from "./relay-message.mjs";
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(name);
@@ -30,10 +31,30 @@ console.log(`Prompt: ${prompt}`);
 console.log(`App-server endpoint: ws://127.0.0.1:${appServerPort}`);
 
 function broadcast(obj) {
-  const payload = JSON.stringify(obj);
+  let payload;
+  try {
+    payload = JSON.stringify(obj);
+  } catch (error) {
+    console.error(
+      `Failed to serialize relay broadcast payload: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return;
+  }
+
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(payload);
+      try {
+        client.send(payload);
+      } catch (error) {
+        console.error(
+          `Relay client send failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+        try {
+          client.terminate();
+        } catch {
+          // Best effort cleanup.
+        }
+      }
     }
   }
 }
@@ -131,24 +152,21 @@ function sendJsonRpcRequest(method, params, timeoutMs = 15000) {
 }
 
 function handleAppServerMessage(raw) {
-  let message;
-  try {
-    message = JSON.parse(raw);
-  } catch {
+  const parsed = parseAppServerPayload(raw);
+  if (!parsed.ok) {
     broadcast({
       type: "appserver.error",
       ts: Date.now(),
-      message: "Invalid JSON from app-server",
-      raw: String(raw),
+      message: parsed.reason === "invalid_json" ? "Invalid JSON from app-server" : "Invalid message shape from app-server",
+      raw: parsed.raw,
     });
     return;
   }
 
-  const isResponse = Object.prototype.hasOwnProperty.call(message, "id") && !message.method;
-  const isServerRequest = Object.prototype.hasOwnProperty.call(message, "id") && Boolean(message.method);
-  const isNotification = !Object.prototype.hasOwnProperty.call(message, "id") && Boolean(message.method);
+  const message = parsed.message;
+  const messageKind = classifyJsonRpcMessage(message);
 
-  if (isResponse) {
+  if (messageKind === "response") {
     const pending = pendingRequests.get(message.id);
     if (!pending) return;
 
@@ -164,7 +182,7 @@ function handleAppServerMessage(raw) {
     return;
   }
 
-  if (isServerRequest) {
+  if (messageKind === "request") {
     const reply = {
       jsonrpc: "2.0",
       id: message.id,
@@ -188,7 +206,7 @@ function handleAppServerMessage(raw) {
     return;
   }
 
-  if (isNotification) {
+  if (messageKind === "notification") {
     broadcast(message);
 
     if (message.method === "turn/completed") {
@@ -306,7 +324,7 @@ async function startSession() {
   });
 
   appServerSocket.on("message", (data) => {
-    handleAppServerMessage(typeof data === "string" ? data : data.toString("utf8"));
+    handleAppServerMessage(data);
   });
 
   appServerSocket.on("close", () => {

@@ -33,13 +33,14 @@ The dashboard tracks:
 
 ## Local Operator Flow
 
-1. Start UI: `npm run dev`
-2. Start helper (optional): `npm run helper`
-3. Start relay: `node relay.mjs --repo <path> --prompt "..."`
-4. Open `http://localhost:8788`
-5. Confirm websocket status is `connected`
-6. Inspect a timeline event and compare raw payload vs derived meaning
-7. Use scorecard + intervention text to decide whether to continue, redirect, or stop
+1. Run verification first: `npm test`
+2. Start UI: `npm run dev`
+3. Start helper (optional): `npm run helper`
+4. Start relay: `node relay.mjs --repo <path> --prompt "..."`
+5. Open `http://localhost:8788`
+6. Confirm websocket status is `connected`
+7. Inspect a timeline event and compare raw payload vs derived meaning
+8. Use scorecard + intervention text to decide whether to continue, redirect, or stop
 
 ## Multi-Agent Stress Flow
 
@@ -48,16 +49,20 @@ For concurrent local testing:
 1. Start swarm: `npm run swarm -- --repo <path> --count 4 --port 8899 --continuous true`
 2. Open `http://localhost:8788/?ws=ws://localhost:8899`
 3. Track lane-level differences in error rates, file activity, and stuck score
+4. Swarm stream is cinematic by default: noisy deltas are filtered, non-critical events are paced, and file deltas are coalesced for readability
+5. If cadence flags are omitted, swarm defaults are slower (`stagger=2400ms`, `restart-delay=10000ms`) for judge readability
 
 ## Calm Judge Mode
 
-When the live stream is noisy, use the in-UI calm simulation:
+When you need a deterministic fallback, use the in-UI calm simulation:
 
 1. Click `Sim calm swarm`
 2. Observe one primary active agent per cycle across 5 lanes
 3. Use this view to explain phase progression and intervention logic clearly
 
 This mode prioritizes clarity and completeness for judges while preserving visible Codex-style behavior.
+
+For live judging, prefer swarm cinematic mode first; use calm simulation only if runtime conditions are unstable.
 
 ## Criteria Mapping
 
@@ -79,6 +84,7 @@ This mode prioritizes clarity and completeness for judges while preserving visib
 ## Scope Guardrails
 
 - Input source is Codex app-server notifications relayed to websocket
+- Swarm websocket (`8899`) is cinematic/filtered by design; single relay (`8787`) remains raw
 - Unknown event shapes should still produce understandable UI behavior
 - Prefer fail-fast error states over silent degraded behavior
 

@@ -153,12 +153,12 @@ body.colorblind {
 
 .top-summary-track {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 8px;
-  white-space: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
+  white-space: normal;
+  flex-wrap: wrap;
+  overflow: visible;
 }
 
 .summary-start-wrap {
@@ -168,6 +168,7 @@ body.colorblind {
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
+  min-width: 280px;
 }
 
 .summary-start-hint {
@@ -200,7 +201,7 @@ body.colorblind {
 }
 
 .summary-announcement {
-  max-width: min(44vw, 520px);
+  max-width: clamp(140px, 18vw, 260px);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -227,7 +228,7 @@ body.colorblind {
 .summary-cta-run {
   margin-left: 0;
   min-height: 40px;
-  min-width: 290px;
+  min-width: 280px;
   padding: 10px 16px;
   border-radius: 12px;
   border: 2px solid #ffe282;
@@ -1000,10 +1001,6 @@ body.reduced-motion * {
 
 @media (max-width: 1440px) {
   .top-summary-track {
-    white-space: normal;
-    flex-wrap: wrap;
-    overflow-x: visible;
-    align-items: flex-start;
     row-gap: 6px;
   }
 

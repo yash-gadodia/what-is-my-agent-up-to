@@ -7,169 +7,192 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="layout">
-      <aside class="panel panel-left" aria-label="Operator panel">
-        <header class="section-head">
-          <h1>Operator Panel</h1>
-          <p id="wsStatus" class="chip">WS: connecting</p>
-        </header>
+    <main class="shell">
+      <header id="topSummaryBar" class="top-summary" aria-live="polite">
+        <div class="top-summary-track">
+          <p id="summaryRunIdentity" class="summary-chip">Lorong: Waiting | codex:main</p>
+          <p id="summaryMode" class="summary-chip">Mode: Live</p>
+          <p id="summaryConnection" class="summary-chip">Connection: Connecting</p>
+          <p id="summaryStatus" class="summary-chip">Status: Paused</p>
+          <p id="summaryRuntime" class="summary-chip">Runtime: 0s</p>
+          <p id="summaryBlockedSince" class="summary-chip is-hidden">Blocked since: n/a</p>
+          <button id="summaryFirstAnomaly" type="button" class="summary-chip button-chip is-hidden">First anomaly: n/a</button>
+          <button id="summaryNeedsAttention" type="button" class="summary-chip button-chip">Needs attention: 0</button>
+          <button id="summaryStalled" type="button" class="summary-chip button-chip">System stalled: 0</button>
+          <button id="summaryApprovals" type="button" class="summary-chip button-chip">Approvals pending: 0</button>
+          <button id="summaryPrimaryCta" type="button" class="summary-cta">Open Ops</button>
+        </div>
+      </header>
 
-        <section class="control-group" aria-label="Controls">
-          <div class="row">
-            <button id="newRunBtn" type="button">New Run</button>
-            <button id="reconnectBtn" type="button">Reconnect</button>
-          </div>
-          <div class="row">
-            <button id="simPackBtn" type="button">Simulator Pack</button>
-            <button id="simScoldedBtn" type="button">Sim scolded</button>
-            <button id="simLongtaskBtn" type="button">Sim longtask</button>
-            <button id="simAsleepBtn" type="button">Sim asleep</button>
-          </div>
-          <div class="row controls-inline">
-            <label class="toggle"><input id="reducedMotionToggle" type="checkbox" /> Reduced motion</label>
-            <label class="toggle"><input id="colorblindToggle" type="checkbox" /> Colorblind palette</label>
-            <label class="field-inline" for="tileSizeSelect"
-              >Tile size
-              <select id="tileSizeSelect">
-                <option value="s">S</option>
-                <option value="m" selected>M</option>
-                <option value="l">L</option>
-              </select>
-            </label>
-          </div>
-        </section>
-
-        <section class="queue-section" aria-label="Needs attention queue">
-          <div class="section-head tight">
-            <h2>Needs Attention Queue</h2>
-          </div>
-          <ul id="attentionQueue" class="attention-queue"></ul>
-        </section>
-
-        <section class="agent-list-section" aria-label="Compact agent list">
-          <div class="section-head tight">
-            <h2>Compact Agent List</h2>
-          </div>
-          <div class="filters">
-            <input id="agentSearch" type="text" placeholder="Search agent" />
-            <select id="phaseFilter">
-              <option value="all">All phases</option>
-              <option value="plan">Plan</option>
-              <option value="execute">Execute</option>
-              <option value="verify">Verify</option>
-              <option value="report">Report</option>
-              <option value="approval">Approval</option>
-            </select>
-            <select id="statusFilter">
-              <option value="all">All status</option>
-              <option value="active">Active</option>
-              <option value="waiting">Waiting</option>
-              <option value="needs-human">Needs human</option>
-              <option value="blocked">Blocked</option>
-              <option value="loop">Loop</option>
-              <option value="failed">Failed</option>
-              <option value="done">Done</option>
-            </select>
-            <select id="typeFilter">
-              <option value="all">All types</option>
-              <option value="main">Main</option>
-              <option value="manual">Manual</option>
-              <option value="simulated">Simulated</option>
-            </select>
-          </div>
-          <div class="agent-table-wrap">
-            <table class="agent-table">
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Phase</th>
-                  <th>Status</th>
-                  <th>Runtime</th>
-                  <th>Last Action</th>
-                </tr>
-              </thead>
-              <tbody id="agentTableBody"></tbody>
-            </table>
-          </div>
-        </section>
-      </aside>
-
-      <section class="panel panel-center" aria-label="Control room map">
-        <section class="hud-bar" aria-live="polite">
-          <p id="hudMode" class="caption-pill">Mode: Live</p>
-          <p id="hudLane" class="caption-pill">Lorong: Waiting</p>
-          <p id="hudRuntime" class="caption-pill">Runtime: 0s</p>
-          <p id="hudBlockedSince" class="caption-pill">Blocked since: n/a</p>
-          <p id="hudFirstAnomaly" class="caption-pill">First anomaly: n/a</p>
-          <div class="view-toggle" role="group" aria-label="View mode">
-            <button id="cityViewBtn" type="button">City View</button>
-            <button id="paneViewBtn" type="button">Pane View</button>
-          </div>
-        </section>
-
+      <section class="stage" aria-label="Control room map">
         <div id="mapViewport" class="map-wrap">
           <canvas id="cityCanvas" width="1280" height="720"></canvas>
           <div id="mapOverlay" class="map-overlay" aria-label="Agent tiles" role="listbox"></div>
           <p id="runBadge" class="run-badge">No run selected</p>
         </div>
-
-        <section id="paneViewport" class="pane-wrap" aria-label="Pane view"></section>
-
-        <section class="approval-street" aria-label="Approval street">
-          <div class="approval-head">
-            <h2>Approval Street (Human Gate)</h2>
-            <p id="approvalCount" class="chip">0 pending</p>
-            <button id="approveNextBtn" type="button">Approve next</button>
-            <button id="batchApproveBtn" type="button">Batch approve</button>
-          </div>
-          <div id="approvalList" class="approval-list"></div>
-        </section>
-
-        <section class="replay-bar" aria-label="Replay controls">
-          <div class="row replay-row">
-            <button id="playPauseBtn" type="button">Play</button>
-            <button id="liveViewBtn" type="button">Live View</button>
-            <label class="field-inline" for="replaySpeed"
-              >Speed
-              <select id="replaySpeed">
-                <option value="1">1x</option>
-                <option value="2">2x</option>
-                <option value="5">5x</option>
-              </select>
-            </label>
-            <button id="exportRunBtn" type="button">Export JSONL</button>
-            <label class="import-label" for="importRunInput">Import JSONL</label>
-            <input id="importRunInput" type="file" accept=".jsonl,.txt,.json" />
-          </div>
-          <input id="replaySlider" type="range" min="0" max="0" value="0" />
-          <p id="replayInfo" class="muted">Replay: ready</p>
-        </section>
       </section>
 
-      <aside class="panel panel-right" aria-label="Agent drilldown">
-        <div class="section-head">
-          <h2>Agent Drilldown</h2>
+      <section id="approvalStreet" class="approval-street collapsed" aria-label="Approval street">
+        <div class="approval-head">
+          <button id="approvalStreetToggle" type="button" class="approval-toggle">Approval Street</button>
+          <p id="approvalCount" class="chip">0 pending</p>
+          <button id="approveNextBtn" type="button">Approve next</button>
+          <button id="batchApproveBtn" type="button">Batch approve</button>
         </div>
-        <section id="drawer" class="drawer" aria-live="polite">
-          <h3 id="drawerTitle">No agent selected</h3>
-          <p id="drawerTask" class="muted">Select an agent tile, queue card, or table row.</p>
-          <p id="drawerLastSuccess" class="muted">Last success: n/a</p>
-          <p id="drawerBlocker" class="muted">Blocker: none</p>
-          <div class="drawer-actions row">
-            <button id="jumpFirstAnomalyBtn" type="button">Jump to first anomaly</button>
-            <button id="provideInputBtn" type="button">Provide input</button>
-          </div>
-          <section>
-            <h4>Recommended Actions</h4>
-            <ul id="drawerRecommendations" class="drawer-list"></ul>
-          </section>
-          <section>
-            <h4>Last 20 Events</h4>
-            <ul id="drawerEvents" class="drawer-list events"></ul>
-          </section>
-        </section>
-      </aside>
+        <div id="approvalStreetBody" class="approval-body">
+          <div id="approvalList" class="approval-list"></div>
+        </div>
+      </section>
     </main>
+
+    <button id="opsTab" type="button" class="ops-tab" aria-controls="opsDrawer" aria-expanded="false">
+      OPS
+      <span id="opsTabBadge" class="ops-tab-badge">0</span>
+    </button>
+
+    <aside id="opsDrawer" class="drawer-panel drawer-left" aria-label="Ops drawer" aria-hidden="true">
+      <div class="section-head">
+        <h1>Ops</h1>
+        <button id="opsDrawerClose" type="button">Close</button>
+      </div>
+
+      <section class="queue-section" aria-label="Needs attention queue">
+        <div class="section-head tight">
+          <h2>Needs Attention Queue</h2>
+        </div>
+        <ul id="attentionQueue" class="attention-queue"></ul>
+      </section>
+
+      <section class="agent-list-section" aria-label="Compact agent list">
+        <div class="section-head tight">
+          <h2>Compact Agent List</h2>
+        </div>
+        <div class="filters">
+          <input id="agentSearch" type="text" placeholder="Search agent" />
+          <select id="phaseFilter">
+            <option value="all">All phases</option>
+            <option value="plan">Plan</option>
+            <option value="execute">Execute</option>
+            <option value="verify">Verify</option>
+            <option value="report">Report</option>
+            <option value="approval">Approval</option>
+          </select>
+          <select id="statusFilter">
+            <option value="all">All status</option>
+            <option value="active">Active</option>
+            <option value="waiting">Waiting</option>
+            <option value="needs-human">Needs human</option>
+            <option value="blocked">Blocked</option>
+            <option value="loop">Loop</option>
+            <option value="failed">Failed</option>
+            <option value="done">Done</option>
+          </select>
+          <select id="typeFilter">
+            <option value="all">All types</option>
+            <option value="main">Main</option>
+            <option value="manual">Manual</option>
+            <option value="simulated">Simulated</option>
+          </select>
+        </div>
+        <div class="agent-table-wrap">
+          <table class="agent-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Phase</th>
+                <th>Status</th>
+                <th>Runtime</th>
+                <th>Last Action</th>
+              </tr>
+            </thead>
+            <tbody id="agentTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="devtools-section">
+        <button id="opsDevtoolsToggle" type="button" class="devtools-toggle" aria-expanded="false" aria-controls="opsDevtoolsPanel">
+          Dev tools
+        </button>
+        <div id="opsDevtoolsPanel" class="devtools-panel" hidden>
+          <div class="control-group" aria-label="Controls">
+            <div class="row">
+              <button id="newRunBtn" type="button">New Run</button>
+              <button id="reconnectBtn" type="button">Reconnect</button>
+            </div>
+            <div class="row">
+              <button id="simPackBtn" type="button">Simulator Pack</button>
+              <button id="simScoldedBtn" type="button">Sim scolded</button>
+              <button id="simLongtaskBtn" type="button">Sim longtask</button>
+              <button id="simAsleepBtn" type="button">Sim asleep</button>
+            </div>
+            <div class="row controls-inline">
+              <label class="toggle"><input id="reducedMotionToggle" type="checkbox" /> Reduced motion</label>
+              <label class="toggle"><input id="colorblindToggle" type="checkbox" /> Colorblind palette</label>
+              <label class="field-inline" for="tileSizeSelect"
+                >Tile size
+                <select id="tileSizeSelect">
+                  <option value="s">S</option>
+                  <option value="m" selected>M</option>
+                  <option value="l">L</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <section class="replay-bar" aria-label="Replay controls">
+            <div class="row replay-row">
+              <button id="playPauseBtn" type="button">Play</button>
+              <button id="liveViewBtn" type="button">Live View</button>
+              <label class="field-inline" for="replaySpeed"
+                >Speed
+                <select id="replaySpeed">
+                  <option value="1">1x</option>
+                  <option value="2">2x</option>
+                  <option value="5">5x</option>
+                </select>
+              </label>
+              <button id="exportRunBtn" type="button">Export JSONL</button>
+              <label class="import-label" for="importRunInput">Import JSONL</label>
+              <input id="importRunInput" type="file" accept=".jsonl,.txt,.json" />
+            </div>
+            <input id="replaySlider" type="range" min="0" max="0" value="0" />
+            <p id="replayInfo" class="muted">Replay: ready</p>
+          </section>
+        </div>
+      </section>
+    </aside>
+
+    <div id="opsBackdrop" class="drawer-backdrop" hidden></div>
+
+    <aside id="agentDrawer" class="drawer-panel drawer-right" aria-label="Agent drilldown" aria-hidden="true">
+      <div class="section-head">
+        <h2>Agent Drilldown</h2>
+        <button id="agentDrawerClose" type="button">Close</button>
+      </div>
+      <section id="drawer" class="drawer" aria-live="polite">
+        <h3 id="drawerTitle">No agent selected</h3>
+        <p id="drawerTask" class="muted">Select an agent tile, queue card, or table row.</p>
+        <p id="drawerLastSuccess" class="muted">Last success: n/a</p>
+        <p id="drawerBlocker" class="muted">Blocker: none</p>
+        <div class="drawer-actions row">
+          <button id="jumpFirstAnomalyBtn" type="button">Jump to first anomaly</button>
+          <button id="provideInputBtn" type="button">Provide input</button>
+        </div>
+        <section>
+          <h4>Recommended Actions</h4>
+          <ul id="drawerRecommendations" class="drawer-list"></ul>
+        </section>
+        <section>
+          <h4>Last 20 Events</h4>
+          <ul id="drawerEvents" class="drawer-list events"></ul>
+        </section>
+      </section>
+    </aside>
+
+    <div id="agentDrawerBackdrop" class="drawer-backdrop" hidden></div>
+
+    <div id="opsToast" class="ops-toast" hidden role="status" aria-live="polite"></div>
 
     <script type="module" src="/app.js"></script>
   </body>

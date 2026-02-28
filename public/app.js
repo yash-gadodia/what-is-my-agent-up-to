@@ -57,7 +57,6 @@ const canvas = document.getElementById("cityCanvas");
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
-const wsStatusEl = document.getElementById("wsStatus");
 const newRunBtnEl = document.getElementById("newRunBtn");
 const reconnectBtnEl = document.getElementById("reconnectBtn");
 const simPackBtnEl = document.getElementById("simPackBtn");
@@ -75,18 +74,25 @@ const statusFilterEl = document.getElementById("statusFilter");
 const typeFilterEl = document.getElementById("typeFilter");
 const agentTableBodyEl = document.getElementById("agentTableBody");
 
-const hudModeEl = document.getElementById("hudMode");
-const hudLaneEl = document.getElementById("hudLane");
-const hudRuntimeEl = document.getElementById("hudRuntime");
-const hudBlockedSinceEl = document.getElementById("hudBlockedSince");
-const hudFirstAnomalyEl = document.getElementById("hudFirstAnomaly");
-const cityViewBtnEl = document.getElementById("cityViewBtn");
-const paneViewBtnEl = document.getElementById("paneViewBtn");
+const summaryRunIdentityEl = document.getElementById("summaryRunIdentity");
+const summaryModeEl = document.getElementById("summaryMode");
+const summaryConnectionEl = document.getElementById("summaryConnection");
+const summaryStatusEl = document.getElementById("summaryStatus");
+const summaryRuntimeEl = document.getElementById("summaryRuntime");
+const summaryBlockedSinceEl = document.getElementById("summaryBlockedSince");
+const summaryFirstAnomalyEl = document.getElementById("summaryFirstAnomaly");
+const summaryNeedsAttentionEl = document.getElementById("summaryNeedsAttention");
+const summaryStalledEl = document.getElementById("summaryStalled");
+const summaryApprovalsEl = document.getElementById("summaryApprovals");
+const summaryPrimaryCtaEl = document.getElementById("summaryPrimaryCta");
+
 const mapViewportEl = document.getElementById("mapViewport");
 const mapOverlayEl = document.getElementById("mapOverlay");
-const paneViewportEl = document.getElementById("paneViewport");
 const runBadgeEl = document.getElementById("runBadge");
 
+const approvalStreetEl = document.getElementById("approvalStreet");
+const approvalStreetToggleEl = document.getElementById("approvalStreetToggle");
+const approvalStreetBodyEl = document.getElementById("approvalStreetBody");
 const approvalCountEl = document.getElementById("approvalCount");
 const approveNextBtnEl = document.getElementById("approveNextBtn");
 const batchApproveBtnEl = document.getElementById("batchApproveBtn");
@@ -108,6 +114,17 @@ const drawerRecommendationsEl = document.getElementById("drawerRecommendations")
 const drawerEventsEl = document.getElementById("drawerEvents");
 const jumpFirstAnomalyBtnEl = document.getElementById("jumpFirstAnomalyBtn");
 const provideInputBtnEl = document.getElementById("provideInputBtn");
+const opsTabEl = document.getElementById("opsTab");
+const opsTabBadgeEl = document.getElementById("opsTabBadge");
+const opsDrawerEl = document.getElementById("opsDrawer");
+const opsDrawerCloseEl = document.getElementById("opsDrawerClose");
+const opsBackdropEl = document.getElementById("opsBackdrop");
+const opsDevtoolsToggleEl = document.getElementById("opsDevtoolsToggle");
+const opsDevtoolsPanelEl = document.getElementById("opsDevtoolsPanel");
+const agentDrawerEl = document.getElementById("agentDrawer");
+const agentDrawerCloseEl = document.getElementById("agentDrawerClose");
+const agentDrawerBackdropEl = document.getElementById("agentDrawerBackdrop");
+const opsToastEl = document.getElementById("opsToast");
 
 const state = {
   runs: new Map(),
@@ -134,7 +151,6 @@ const state = {
     timer: null,
   },
   ui: {
-    viewMode: "city",
     selectedAgentRunId: null,
     focusedPhase: "execute",
     reducedMotion: false,
@@ -146,8 +162,16 @@ const state = {
       status: "all",
       agentType: "all",
     },
-    drawerOpen: false,
     drawerMode: "overview",
+    opsDrawerOpen: false,
+    agentDrawerOpen: false,
+    approvalStreetExpanded: false,
+    approvalStreetManual: false,
+    opsDevtoolsExpanded: false,
+    highlightRunId: null,
+    summaryFocusRunId: null,
+    criticalToastUntil: 0,
+    previousCriticalCount: 0,
     mapDensityMode: false,
     keyboardFocusIndex: 0,
     tileRects: [],
@@ -193,6 +217,69 @@ function ageText(ts) {
   if (min < 60) return `${min}m`;
   const hr = Math.floor(min / 60);
   return `${hr}h ${min % 60}m`;
+}
+
+function deriveConnectionState() {
+  const status = String(state.ws.status || "").toLowerCase();
+  if (status === "connected") return "connected";
+  if (status === "connecting" || status.startsWith("reconnecting")) return "reconnecting";
+  return "disconnected";
+}
+
+function deriveTopStatus(run) {
+  if (!run) return "Paused";
+  if (run.operationalStatus === "failed") return "Failed";
+  if (run.operationalStatus === "blocked" || run.operationalStatus === "loop") return "Blocked";
+  if (run.requiresHumanGate) return "Degraded";
+  if (run.operationalStatus === "waiting") return "Paused";
+  if (run.operationalStatus === "done") return "Completed";
+  if (run.operationalStatus === "active") return "Active";
+  return "Paused";
+}
+
+function setOpsDrawerOpen(open) {
+  state.ui.opsDrawerOpen = Boolean(open);
+  opsDrawerEl.classList.toggle("open", state.ui.opsDrawerOpen);
+  opsDrawerEl.setAttribute("aria-hidden", String(!state.ui.opsDrawerOpen));
+  opsBackdropEl.hidden = !state.ui.opsDrawerOpen;
+  opsTabEl.setAttribute("aria-expanded", String(state.ui.opsDrawerOpen));
+  if (state.ui.opsDrawerOpen) {
+    state.ui.criticalToastUntil = 0;
+    opsToastEl.hidden = true;
+  }
+}
+
+function setAgentDrawerOpen(open) {
+  state.ui.agentDrawerOpen = Boolean(open);
+  agentDrawerEl.classList.toggle("open", state.ui.agentDrawerOpen);
+  agentDrawerEl.setAttribute("aria-hidden", String(!state.ui.agentDrawerOpen));
+  agentDrawerBackdropEl.hidden = !state.ui.agentDrawerOpen;
+}
+
+function setApprovalStreetExpanded(expanded, options = {}) {
+  const manual = Boolean(options.manual);
+  state.ui.approvalStreetExpanded = Boolean(expanded);
+  if (manual) {
+    state.ui.approvalStreetManual = state.ui.approvalStreetExpanded;
+  } else if (!state.ui.approvalStreetExpanded) {
+    state.ui.approvalStreetManual = false;
+  }
+  approvalStreetEl.classList.toggle("expanded", state.ui.approvalStreetExpanded);
+  approvalStreetEl.classList.toggle("collapsed", !state.ui.approvalStreetExpanded);
+  approvalStreetBodyEl.hidden = !state.ui.approvalStreetExpanded;
+}
+
+function setOpsDevtoolsExpanded(expanded) {
+  state.ui.opsDevtoolsExpanded = Boolean(expanded);
+  opsDevtoolsToggleEl.setAttribute("aria-expanded", String(state.ui.opsDevtoolsExpanded));
+  opsDevtoolsPanelEl.hidden = !state.ui.opsDevtoolsExpanded;
+}
+
+function showOpsToast(text) {
+  if (!text) return;
+  state.ui.criticalToastUntil = nowMs() + 3000;
+  opsToastEl.textContent = text;
+  opsToastEl.hidden = false;
 }
 
 function phaseStreetLabel(phaseId) {
@@ -559,7 +646,6 @@ function persistRunsToStorage() {
 
 function persistSettings() {
   const payload = {
-    viewMode: state.ui.viewMode,
     reducedMotion: state.ui.reducedMotion,
     colorblindPalette: state.ui.colorblindPalette,
     tileSize: state.ui.tileSize,
@@ -576,7 +662,6 @@ function persistSettings() {
 function restoreSettings() {
   try {
     const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-    if (["city", "pane"].includes(parsed.viewMode)) state.ui.viewMode = parsed.viewMode;
     if (typeof parsed.reducedMotion === "boolean") state.ui.reducedMotion = parsed.reducedMotion;
     if (typeof parsed.colorblindPalette === "boolean") state.ui.colorblindPalette = parsed.colorblindPalette;
     if (["s", "m", "l"].includes(parsed.tileSize)) state.ui.tileSize = parsed.tileSize;
@@ -601,14 +686,6 @@ function restoreSettings() {
   typeFilterEl.value = state.ui.queueFilters.agentType;
   document.body.classList.toggle("reduced-motion", state.ui.reducedMotion);
   document.body.classList.toggle("colorblind", state.ui.colorblindPalette);
-  applyViewMode();
-}
-
-function applyViewMode() {
-  document.body.classList.toggle("view-city", state.ui.viewMode === "city");
-  document.body.classList.toggle("view-pane", state.ui.viewMode === "pane");
-  cityViewBtnEl.classList.toggle("active", state.ui.viewMode === "city");
-  paneViewBtnEl.classList.toggle("active", state.ui.viewMode === "pane");
 }
 
 function restoreRunsFromStorage() {
@@ -699,8 +776,9 @@ function selectRun(runId, options = {}) {
   state.selectedRunId = runId;
   state.ui.selectedAgentRunId = runId;
   state.ui.focusedPhase = run.requiresHumanGate ? "approval" : run.currentPhase;
-  state.ui.drawerOpen = true;
+  state.ui.highlightRunId = runId;
   if (options.drawerMode) state.ui.drawerMode = options.drawerMode;
+  setAgentDrawerOpen(true);
 
   if (state.replay.active && state.replay.sourceRunId !== runId) stopReplay();
 
@@ -814,23 +892,79 @@ function actionRecommendations(run) {
 }
 
 function renderGlobalHud() {
+  const runs = getRunsForView();
   const mode = state.replay.active ? "Replay" : "Live";
   const run = getActiveRunForView();
-  hudModeEl.textContent = `Mode: ${mode}`;
-  if (!run) {
-    hudLaneEl.textContent = "Lorong: Waiting";
-    hudRuntimeEl.textContent = "Runtime: 0s";
-    hudBlockedSinceEl.textContent = "Blocked since: n/a";
-    hudFirstAnomalyEl.textContent = "First anomaly: n/a";
-    runBadgeEl.textContent = `${APP_NAME} | no run selected`;
-    return;
+  const attentionRuns = runs
+    .filter((item) => item.requiresHumanGate || (ATTENTION_RANK[item.needsAttentionSeverity] || 0) >= ATTENTION_RANK.info)
+    .sort(queueSort);
+  const stalledRuns = runs.filter((item) => CULDESAC_BLOCKERS.has(item.blockerClass));
+  const approvals = runs.filter((item) => item.requiresHumanGate);
+  const criticalCount = attentionRuns.filter((item) => item.needsAttentionSeverity === "critical").length;
+
+  if (!state.ui.opsDrawerOpen && criticalCount > state.ui.previousCriticalCount) {
+    showOpsToast(`Critical attention item detected (${criticalCount})`);
+  }
+  state.ui.previousCriticalCount = criticalCount;
+
+  summaryRunIdentityEl.textContent = run ? `${run.laneName} | ${run.label}` : "Lorong: Waiting | codex:main";
+  summaryModeEl.textContent = `Mode: ${mode}`;
+
+  if (mode === "Replay") {
+    summaryConnectionEl.textContent = "Connection: Replay source";
+  } else {
+    const connectionState = deriveConnectionState();
+    const label = connectionState === "connected" ? "Connected" : connectionState === "reconnecting" ? "Reconnecting" : "Disconnected";
+    summaryConnectionEl.textContent = `Connection: ${label}`;
   }
 
-  hudLaneEl.textContent = `Lorong: ${run.laneName}`;
-  hudRuntimeEl.textContent = `Runtime: ${formatDuration(run.runtimeMs)}`;
-  hudBlockedSinceEl.textContent = `Blocked since: ${run.blockedSinceTs ? ageText(run.blockedSinceTs) : "n/a"}`;
-  hudFirstAnomalyEl.textContent = `First anomaly: ${run.firstAnomalyTs ? new Date(run.firstAnomalyTs).toLocaleTimeString() : "n/a"}`;
-  runBadgeEl.textContent = `${APP_NAME} | ${run.laneName} | ${run.label}`;
+  const topStatus = deriveTopStatus(run);
+  summaryStatusEl.textContent = `Status: ${topStatus}`;
+  summaryRuntimeEl.textContent = `Runtime: ${run ? formatDuration(run.runtimeMs) : "0s"}`;
+
+  if (run?.blockedSinceTs) {
+    summaryBlockedSinceEl.classList.remove("is-hidden");
+    summaryBlockedSinceEl.textContent = `Blocked since: ${ageText(run.blockedSinceTs)}`;
+  } else {
+    summaryBlockedSinceEl.classList.add("is-hidden");
+  }
+
+  const anomalyRun = run?.firstAnomalyTs
+    ? run
+    : runs.filter((item) => item.firstAnomalyTs).sort((a, b) => a.firstAnomalyTs - b.firstAnomalyTs)[0];
+  state.ui.summaryFocusRunId = anomalyRun?.runId || null;
+
+  if (anomalyRun?.firstAnomalyTs) {
+    summaryFirstAnomalyEl.classList.remove("is-hidden");
+    summaryFirstAnomalyEl.textContent = `First anomaly: ${new Date(anomalyRun.firstAnomalyTs).toLocaleTimeString()}`;
+  } else {
+    summaryFirstAnomalyEl.classList.add("is-hidden");
+  }
+
+  summaryNeedsAttentionEl.textContent = `Needs attention: ${attentionRuns.length}`;
+  summaryStalledEl.textContent = `System stalled: ${stalledRuns.length}`;
+  summaryApprovalsEl.textContent = `Approvals pending: ${approvals.length}`;
+
+  opsTabBadgeEl.textContent = String(attentionRuns.length);
+  opsTabBadgeEl.classList.toggle("critical", criticalCount > 0);
+  opsTabEl.classList.toggle("pulse", criticalCount > 0 && !state.ui.reducedMotion);
+
+  if (approvals.length > 0) {
+    summaryPrimaryCtaEl.textContent = "Approve next";
+    summaryPrimaryCtaEl.dataset.action = "approve-next";
+  } else if (run && (topStatus === "Blocked" || topStatus === "Degraded") && state.ui.summaryFocusRunId) {
+    summaryPrimaryCtaEl.textContent = "Jump to first anomaly";
+    summaryPrimaryCtaEl.dataset.action = "jump-anomaly";
+  } else {
+    summaryPrimaryCtaEl.textContent = "Open Ops";
+    summaryPrimaryCtaEl.dataset.action = "open-ops";
+  }
+
+  if (run) {
+    runBadgeEl.textContent = `${APP_NAME} | ${run.laneName} | ${run.label}`;
+  } else {
+    runBadgeEl.textContent = `${APP_NAME} | no run selected`;
+  }
 }
 
 function phaseLaneGeometry(index) {
@@ -923,7 +1057,8 @@ function drawRunTile(target, tile, phaseId, inCul = false) {
   const { run, x, y, w, h, densityMode } = tile;
   const token = STATUS_TOKENS[run.operationalStatus] || STATUS_TOKENS.waiting;
   const selected = run.runId === state.ui.selectedAgentRunId;
-  const border = selected ? "#f7e085" : token.color;
+  const highlighted = run.runId === state.ui.highlightRunId || (run.highlight && run.highlight.until > nowMs());
+  const border = selected || highlighted ? "#f7e085" : token.color;
   drawRoundedRect(target, x, y, w, h, 5, "rgba(8, 20, 32, 0.92)", border);
 
   drawText(target, `${token.icon} ${densityMode ? run.label.replace(/^codex:/, "").slice(0, 8) : run.label.replace(/^codex:/, "").slice(0, 12)}`, x + 6, y + 14, "#e9f4ff", densityMode ? 8 : 9);
@@ -1140,6 +1275,10 @@ function renderAgentTable(runs) {
 function renderApprovalStreet(runs) {
   const approvals = runs.filter((run) => run.requiresHumanGate).sort(queueSort);
   approvalCountEl.textContent = `${approvals.length} pending`;
+  if (approvals.length > 0) setApprovalStreetExpanded(true);
+  if (approvals.length === 0 && state.ui.approvalStreetExpanded && !state.ui.approvalStreetManual) {
+    setApprovalStreetExpanded(false);
+  }
   approvalListEl.innerHTML = "";
 
   for (const run of approvals) {
@@ -1214,72 +1353,14 @@ function renderReplayUi() {
 }
 
 function renderWsStatus() {
-  wsStatusEl.textContent = `WS: ${state.ws.status}`;
-}
-
-function kindClassFromSummary(summary) {
-  const value = String(summary || "").toLowerCase();
-  if (value.includes("error") || value.includes("failed")) return "kind-error";
-  if (value.includes("changed file")) return "kind-file";
-  if (value.includes("using tool")) return "kind-tool";
-  if (value.includes("success")) return "kind-success";
-  return "";
-}
-
-function renderPaneView(runs) {
-  paneViewportEl.innerHTML = "";
-
-  if (!runs || runs.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "pane-empty";
-    empty.textContent = "No agents yet. Start a run or use Simulator Pack.";
-    paneViewportEl.append(empty);
-    return;
-  }
-
-  const ordered = [...runs].sort((a, b) => (b.lastActionTs || 0) - (a.lastActionTs || 0));
-  for (const run of ordered) {
-    const token = STATUS_TOKENS[run.operationalStatus] || STATUS_TOKENS.waiting;
-    const latest = run.timeline.at(-1);
-    const card = document.createElement("article");
-    card.className = `pane-card${run.runId === state.ui.selectedAgentRunId ? " active" : ""}`;
-    card.dataset.runId = run.runId;
-
-    const logs = run.timeline.slice(-8).reverse();
-    const logHtml = logs
-      .map((event) => `<div class="pane-log-line ${kindClassFromSummary(event.summary)}">${new Date(event.ts).toLocaleTimeString()} | ${event.summary}</div>`)
-      .join("");
-
-    card.innerHTML = `
-      <div class="pane-head">
-        <strong class="pane-title">${run.laneName} | ${run.label}</strong>
-        <span class="state-badge ${token.className}">${token.icon} ${run.operationalStatus}</span>
-      </div>
-      <div class="pane-meta">
-        <span>Phase: ${run.requiresHumanGate ? "approval" : run.currentPhase}</span>
-        <span>Runtime: ${formatDuration(run.runtimeMs)}</span>
-        <span>Last action: ${run.lastActionTs ? ageText(run.lastActionTs) : "n/a"}</span>
-      </div>
-      <div class="pane-step">Current step: ${latest?.summary || "No event captured yet."}</div>
-      <div class="pane-step">Current file: ${latest?.filePath || "none"}</div>
-      <div class="pane-log">${logHtml || '<div class="pane-log-line">No recent events.</div>'}</div>
-    `;
-
-    card.addEventListener("click", () => selectRun(run.runId, { drawerMode: "overview" }));
-    paneViewportEl.append(card);
-  }
+  renderGlobalHud();
 }
 
 function renderUi() {
   updateAllDerived();
   const runs = getRunsForView();
-  applyViewMode();
-  renderWsStatus();
   renderGlobalHud();
-  if (state.ui.viewMode === "city") {
-    drawMap();
-  }
-  renderPaneView(runs);
+  drawMap();
   renderNeedsAttentionQueue(runs);
   renderAgentTable(runs);
   renderApprovalStreet(runs);
@@ -1545,6 +1626,53 @@ function scenarioEvents(name) {
 }
 
 function setupEventHandlers() {
+  opsTabEl.addEventListener("click", () => setOpsDrawerOpen(!state.ui.opsDrawerOpen));
+  opsDrawerCloseEl.addEventListener("click", () => setOpsDrawerOpen(false));
+  opsBackdropEl.addEventListener("click", () => setOpsDrawerOpen(false));
+  agentDrawerCloseEl.addEventListener("click", () => setAgentDrawerOpen(false));
+  agentDrawerBackdropEl.addEventListener("click", () => setAgentDrawerOpen(false));
+
+  opsDevtoolsToggleEl.addEventListener("click", () => {
+    setOpsDevtoolsExpanded(!state.ui.opsDevtoolsExpanded);
+  });
+
+  summaryNeedsAttentionEl.addEventListener("click", () => {
+    setOpsDrawerOpen(true);
+    attentionQueueEl.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  summaryStalledEl.addEventListener("click", () => {
+    setOpsDrawerOpen(true);
+    attentionQueueEl.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  summaryApprovalsEl.addEventListener("click", () => {
+    setApprovalStreetExpanded(true, { manual: true });
+  });
+
+  summaryFirstAnomalyEl.addEventListener("click", () => {
+    if (!state.ui.summaryFocusRunId) return;
+    jumpToFirstAnomaly(state.ui.summaryFocusRunId);
+  });
+
+  summaryPrimaryCtaEl.addEventListener("click", () => {
+    const action = summaryPrimaryCtaEl.dataset.action;
+    if (action === "approve-next") {
+      const approvals = getRunsForView().filter((run) => run.requiresHumanGate).sort(queueSort);
+      if (approvals[0]) approveRun(approvals[0].runId);
+      return;
+    }
+    if (action === "jump-anomaly") {
+      if (state.ui.summaryFocusRunId) jumpToFirstAnomaly(state.ui.summaryFocusRunId);
+      return;
+    }
+    setOpsDrawerOpen(true);
+  });
+
+  approvalStreetToggleEl.addEventListener("click", () => {
+    setApprovalStreetExpanded(!state.ui.approvalStreetExpanded, { manual: true });
+  });
+
   newRunBtnEl.addEventListener("click", () => {
     state.manualRunCounter += 1;
     const runId = `manual:${state.manualRunCounter}`;
@@ -1560,18 +1688,6 @@ function setupEventHandlers() {
   reconnectBtnEl.addEventListener("click", () => {
     state.ws.attempts = 0;
     connectWebSocket();
-  });
-
-  cityViewBtnEl.addEventListener("click", () => {
-    state.ui.viewMode = "city";
-    persistSettings();
-    renderUi();
-  });
-
-  paneViewBtnEl.addEventListener("click", () => {
-    state.ui.viewMode = "pane";
-    persistSettings();
-    renderUi();
   });
 
   simScoldedBtnEl.addEventListener("click", () => runScenario("scolded"));
@@ -1716,6 +1832,11 @@ function setupEventHandlers() {
   });
 
   window.addEventListener("resize", () => renderMapOverlay());
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (state.ui.agentDrawerOpen) setAgentDrawerOpen(false);
+    if (state.ui.opsDrawerOpen) setOpsDrawerOpen(false);
+  });
 }
 
 let lastFrameAt = performance.now();
@@ -1723,12 +1844,13 @@ function frame(now) {
   if (now - lastFrameAt > 250) {
     lastFrameAt = now;
     renderGlobalHud();
-    if (state.ui.viewMode === "city") {
-      drawMap();
-    }
-    renderPaneView(getRunsForView());
+    drawMap();
     renderNeedsAttentionQueue(getRunsForView());
     renderApprovalStreet(getRunsForView());
+    if (state.ui.criticalToastUntil && nowMs() > state.ui.criticalToastUntil) {
+      state.ui.criticalToastUntil = 0;
+      opsToastEl.hidden = true;
+    }
   }
   requestAnimationFrame(frame);
 }
@@ -1738,6 +1860,10 @@ function boot() {
   restoreSettings();
   restoreRunsFromStorage();
   setupEventHandlers();
+  setOpsDrawerOpen(false);
+  setAgentDrawerOpen(false);
+  setApprovalStreetExpanded(false);
+  setOpsDevtoolsExpanded(false);
   connectWebSocket();
   state.replay.speed = Number(replaySpeedEl.value) || 1;
   updateAllDerived();

@@ -38,6 +38,25 @@ WIMUT combines:
 - run lanes, timeline, scorecard, stuck detection, and replay
 - a Singapore-themed pixel city metaphor that makes activity legible in seconds
 
+## Visual-First Layout (Current)
+
+Default load state:
+
+- sticky one-row top summary bar (run identity, mode, connection, status, runtime, anomaly/counters)
+- streets canvas as the main viewport
+- left-edge `OPS` tab with attention badge (drawer closed by default)
+- right agent drawer closed until an agent is selected
+- bottom Approval Street as a thin strip when approvals are `0 pending`
+
+Core interactions:
+
+- `Needs attention` opens Ops drawer to the queue
+- `Approvals pending` expands Approval Street
+- `First anomaly` jumps focus and highlights the relevant run
+- top CTA is context-sensitive: `Approve next` -> `Jump to first anomaly` -> `Open Ops`
+
+Replay and simulator controls live under `Ops -> Dev tools` (collapsed by default) so fallback reliability is preserved without shrinking the visual map.
+
 ## What We Built
 
 - Real-time dashboard for Codex app-server runs
@@ -105,9 +124,10 @@ npm run helper
 
 Then in the UI:
 
-1. Set `Repo path`
-2. Enable `Use git diff`
-3. Click `Set Repo`
+1. Confirm top summary connection chip reaches `Connected` (or use `Reconnect` in `Ops -> Dev tools`)
+2. Use `Needs attention` and `Approvals pending` chips to jump to intervention surfaces
+3. Select an agent tile or queue card to open the right Agent Drawer
+4. Expand `Ops -> Dev tools` for replay/simulator controls when needed
 
 ## Multi-Agent Local Testing
 

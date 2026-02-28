@@ -34,30 +34,41 @@
 
       <header id="topSummaryBar" class="top-summary" aria-live="polite">
         <div class="top-summary-track">
-          <p id="summaryRunIdentity" class="summary-chip">Lorong: Waiting | codex:main</p>
-          <p id="summaryMode" class="summary-chip">Mode: Live</p>
-          <p id="summaryConnection" class="summary-chip summary-secondary">Connection: Connecting</p>
-          <p id="summaryStatus" class="summary-chip summary-secondary">Status: Paused</p>
-          <p id="summaryRuntime" class="summary-chip summary-secondary">Runtime: 0s</p>
-          <p id="summaryBlockedSince" class="summary-chip summary-secondary is-hidden">Blocked since: n/a</p>
-          <button id="summaryFirstAnomaly" type="button" class="summary-chip summary-secondary button-chip is-hidden">First anomaly: n/a</button>
-          <button id="summaryNeedsAttention" type="button" class="summary-chip summary-secondary button-chip">Needs attention: 0</button>
-          <button id="summaryStalled" type="button" class="summary-chip summary-secondary button-chip">System stalled: 0</button>
-          <button id="summaryApprovals" type="button" class="summary-chip summary-secondary button-chip">Approvals pending: 0</button>
-          <p id="summaryAnnouncement" class="summary-chip summary-announcement is-hidden">Announcement: waiting for command</p>
-          <button id="summaryPrimaryCta" type="button" class="summary-cta summary-secondary">Open Ops</button>
-          <div class="view-toggle" role="group" aria-label="View mode">
-            <button id="viewCityBtn" type="button" class="summary-chip button-chip active">City</button>
-            <button id="viewPaneBtn" type="button" class="summary-chip button-chip">Pane</button>
-          </div>
+          <section class="summary-context" aria-label="Session context">
+            <p id="summaryRunIdentity" class="summary-context-line">Lorong: Waiting · Workflow main</p>
+            <p id="summaryContextStatus" class="summary-context-line">
+              <span id="summaryMode" class="context-token">Live</span>
+              <span class="context-sep">·</span>
+              <span class="context-dot" aria-hidden="true"></span>
+              <span id="summaryConnection" class="context-token">Connecting</span>
+            </p>
+          </section>
+
+          <section id="summaryHealth" class="summary-health health-degraded" aria-label="System health cluster">
+            <p id="summaryHealthTitle" class="summary-health-title">DEGRADED SYSTEM</p>
+            <p id="summaryHealthLine" class="summary-health-line">0 Needs Attention · 0 Stalled · 0 Approvals</p>
+            <p id="summaryHealthSince" class="summary-health-since">No active blockers</p>
+          </section>
+
+          <section class="summary-action" aria-label="Primary action">
+            <p id="summaryRuntime" class="summary-action-metrics">0s runtime · First anomaly n/a</p>
+            <button id="summaryPrimaryCta" type="button" class="summary-cta summary-cta-ops">Review Alerts (0)</button>
+            <p id="summaryAnnouncement" class="summary-announcement is-hidden">Announcement: waiting for command</p>
+          </section>
+
           <div class="summary-start-wrap" aria-label="Demo start">
             <button id="summaryRunSimBtn" type="button" class="summary-cta summary-cta-run">Watch a Demo <span class="summary-cta-icon" aria-hidden="true">&#9654;</span></button>
-            <p class="summary-start-hint">First time? Click here.</p>
           </div>
         </div>
       </header>
 
       <section class="stage" aria-label="Control room map">
+        <div class="stage-controls" aria-label="Viewport controls">
+          <div class="view-toggle segmented" role="group" aria-label="View mode">
+            <button id="viewCityBtn" type="button" class="button-chip active">City</button>
+            <button id="viewPaneBtn" type="button" class="button-chip">Pane</button>
+          </div>
+        </div>
         <div id="mapViewport" class="map-wrap">
           <div id="demoScriptBanner" class="demo-script-banner" hidden>
             <span class="demo-script-label">Demo Script</span>

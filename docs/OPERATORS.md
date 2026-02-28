@@ -41,6 +41,7 @@ The dashboard tracks:
 6. Confirm websocket status is `connected`
 7. Inspect a timeline event and compare raw payload vs derived meaning
 8. Use scorecard + intervention text to decide whether to continue, redirect, or stop
+9. Use the top-bar `Review Alerts` button to jump directly into intervention queue workflows
 
 ## Multi-Agent Stress Flow
 

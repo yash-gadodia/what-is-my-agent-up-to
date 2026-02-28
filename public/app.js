@@ -117,15 +117,14 @@ const typeFilterEl = document.getElementById("typeFilter");
 const agentTableBodyEl = document.getElementById("agentTableBody");
 
 const summaryRunIdentityEl = document.getElementById("summaryRunIdentity");
+const summaryContextStatusEl = document.getElementById("summaryContextStatus");
 const summaryModeEl = document.getElementById("summaryMode");
 const summaryConnectionEl = document.getElementById("summaryConnection");
-const summaryStatusEl = document.getElementById("summaryStatus");
+const summaryHealthEl = document.getElementById("summaryHealth");
+const summaryHealthTitleEl = document.getElementById("summaryHealthTitle");
+const summaryHealthLineEl = document.getElementById("summaryHealthLine");
+const summaryHealthSinceEl = document.getElementById("summaryHealthSince");
 const summaryRuntimeEl = document.getElementById("summaryRuntime");
-const summaryBlockedSinceEl = document.getElementById("summaryBlockedSince");
-const summaryFirstAnomalyEl = document.getElementById("summaryFirstAnomaly");
-const summaryNeedsAttentionEl = document.getElementById("summaryNeedsAttention");
-const summaryStalledEl = document.getElementById("summaryStalled");
-const summaryApprovalsEl = document.getElementById("summaryApprovals");
 const summaryAnnouncementEl = document.getElementById("summaryAnnouncement");
 const summaryPrimaryCtaEl = document.getElementById("summaryPrimaryCta");
 const summaryRunSimBtnEl = document.getElementById("summaryRunSimBtn");
@@ -356,6 +355,69 @@ function deriveConnectionState() {
   if (status === "connected") return "connected";
   if (status === "connecting" || status.startsWith("reconnecting")) return "reconnecting";
   return "disconnected";
+}
+
+function deriveConnectionMeta(mode) {
+  if (mode === "Replay") return { label: "Replay source", tone: "connected" };
+  const stateName = deriveConnectionState();
+  if (stateName === "connected") return { label: "Connected", tone: "connected" };
+  if (stateName === "reconnecting") return { label: "Reconnecting", tone: "reconnecting" };
+  return { label: "Disconnected", tone: "disconnected" };
+}
+
+function deriveHealthCluster(runs, attentionRuns, stalledRuns, approvals) {
+  const blockedRuns = runs.filter((item) => ["blocked", "loop", "failed"].includes(item.operationalStatus));
+  const blockedTs = blockedRuns
+    .map((item) => item.blockedSinceTs || item.lastActionTs || 0)
+    .filter((value) => value > 0)
+    .sort((a, b) => a - b)[0];
+  const stalledTs = stalledRuns
+    .map((item) => item.blockedSinceTs || item.lastActionTs || 0)
+    .filter((value) => value > 0)
+    .sort((a, b) => a - b)[0];
+  const approvalTs = approvals
+    .map((item) => item.lastActionTs || item.lastTs || 0)
+    .filter((value) => value > 0)
+    .sort((a, b) => a - b)[0];
+
+  const line = `${attentionRuns.length} Needs Attention · ${stalledRuns.length} Stalled · ${approvals.length} Approvals`;
+  if (blockedRuns.length > 0) {
+    return {
+      tone: "blocked",
+      title: "BLOCKED SYSTEM",
+      line,
+      since: blockedTs ? `Blocked ${ageText(blockedTs)} ago` : "Blocked state detected",
+    };
+  }
+  if (attentionRuns.length > 0 || stalledRuns.length > 0 || approvals.length > 0) {
+    const timeHint = stalledTs || approvalTs || 0;
+    return {
+      tone: "degraded",
+      title: "DEGRADED SYSTEM",
+      line,
+      since: timeHint ? `Degraded ${ageText(timeHint)} ago` : "Operator attention needed",
+    };
+  }
+  return {
+    tone: "healthy",
+    title: "HEALTHY SYSTEM",
+    line,
+    since: "No active blockers",
+  };
+}
+
+function formatTopBarMetrics(run, anomalyRun) {
+  const runtimeText = run ? formatDuration(run.runtimeMs) : "0s";
+  const anomalyText = anomalyRun?.firstAnomalyTs ? new Date(anomalyRun.firstAnomalyTs).toLocaleTimeString() : "n/a";
+  return `${runtimeText} runtime · First anomaly ${anomalyText}`;
+}
+
+function actionCountFromRuns(attentionRuns, stalledRuns, approvals) {
+  const ids = new Set();
+  for (const run of attentionRuns) ids.add(run.runId);
+  for (const run of stalledRuns) ids.add(run.runId);
+  for (const run of approvals) ids.add(run.runId);
+  return ids.size;
 }
 
 function deriveTopStatus(run) {
@@ -1416,26 +1478,14 @@ function renderGlobalHud() {
   }
   state.ui.previousCriticalCount = criticalCount;
 
-  summaryRunIdentityEl.textContent = run ? `${run.laneName} | ${displayLabel(run)}` : "Lorong: Waiting | Workflow · main";
-  summaryModeEl.textContent = `Mode: ${mode}`;
+  summaryRunIdentityEl.textContent = run ? `${run.laneName} · ${displayLabel(run)}` : "Lorong: Waiting · Workflow main";
+  summaryModeEl.textContent = mode;
 
-  if (mode === "Replay") {
-    summaryConnectionEl.textContent = "Connection: Replay source";
-  } else {
-    const connectionState = deriveConnectionState();
-    const label = connectionState === "connected" ? "Connected" : connectionState === "reconnecting" ? "Reconnecting" : "Disconnected";
-    summaryConnectionEl.textContent = `Connection: ${label}`;
-  }
-
-  const topStatus = deriveTopStatus(run);
-  summaryStatusEl.textContent = `Status: ${topStatus}`;
-  summaryRuntimeEl.textContent = `Runtime: ${run ? formatDuration(run.runtimeMs) : "0s"}`;
-
-  if (run?.blockedSinceTs) {
-    summaryBlockedSinceEl.classList.remove("is-hidden");
-    summaryBlockedSinceEl.textContent = `Blocked since: ${ageText(run.blockedSinceTs)}`;
-  } else {
-    summaryBlockedSinceEl.classList.add("is-hidden");
+  const connection = deriveConnectionMeta(mode);
+  summaryConnectionEl.textContent = connection.label;
+  if (summaryContextStatusEl) {
+    summaryContextStatusEl.classList.remove("conn-connected", "conn-reconnecting", "conn-disconnected");
+    summaryContextStatusEl.classList.add(`conn-${connection.tone}`);
   }
 
   const anomalyRun = run?.firstAnomalyTs
@@ -1443,16 +1493,14 @@ function renderGlobalHud() {
     : runs.filter((item) => item.firstAnomalyTs).sort((a, b) => a.firstAnomalyTs - b.firstAnomalyTs)[0];
   state.ui.summaryFocusRunId = anomalyRun?.runId || null;
 
-  if (anomalyRun?.firstAnomalyTs) {
-    summaryFirstAnomalyEl.classList.remove("is-hidden");
-    summaryFirstAnomalyEl.textContent = `First anomaly: ${new Date(anomalyRun.firstAnomalyTs).toLocaleTimeString()}`;
-  } else {
-    summaryFirstAnomalyEl.classList.add("is-hidden");
-  }
+  const health = deriveHealthCluster(runs, attentionRuns, stalledRuns, approvals);
+  summaryHealthEl.classList.remove("health-healthy", "health-degraded", "health-blocked");
+  summaryHealthEl.classList.add(`health-${health.tone}`);
+  summaryHealthTitleEl.textContent = health.title;
+  summaryHealthLineEl.textContent = health.line;
+  summaryHealthSinceEl.textContent = health.since;
 
-  summaryNeedsAttentionEl.textContent = `Needs attention: ${attentionRuns.length}`;
-  summaryStalledEl.textContent = `System stalled: ${stalledRuns.length}`;
-  summaryApprovalsEl.textContent = `Approvals pending: ${approvals.length}`;
+  summaryRuntimeEl.textContent = formatTopBarMetrics(run, anomalyRun);
   if (summaryAnnouncementEl) {
     if (state.ui.latestCommandText) {
       summaryAnnouncementEl.textContent = `${state.ui.latestCommandSource}: ${state.ui.latestCommandText}`;
@@ -1462,17 +1510,19 @@ function renderGlobalHud() {
     }
   }
 
-  opsTabBadgeEl.textContent = String(attentionRuns.length);
+  const actionCount = actionCountFromRuns(attentionRuns, stalledRuns, approvals);
+  opsTabBadgeEl.textContent = String(actionCount);
   opsTabBadgeEl.classList.toggle("critical", criticalCount > 0);
   opsTabEl.classList.toggle("pulse", criticalCount > 0 && !state.ui.reducedMotion);
 
-  summaryPrimaryCtaEl.textContent = "Open Ops";
+  summaryPrimaryCtaEl.textContent = `Review Alerts (${actionCount})`;
   summaryPrimaryCtaEl.dataset.action = "open-ops";
+  summaryPrimaryCtaEl.classList.toggle("attention", actionCount > 0);
+  summaryPrimaryCtaEl.setAttribute("aria-label", `Review Alerts (${actionCount})`);
 
   const hasActiveRuns = runs.some((item) => item.operationalStatus === "active" || item.operationalStatus === "waiting");
-  const hasOpenIssues = attentionRuns.length > 0 || approvals.length > 0 || stalledRuns.length > 0;
-  const shouldExpandSummary = mode === "Replay" || hasActiveRuns || hasOpenIssues || topStatus === "Blocked" || topStatus === "Degraded";
-  topSummaryBarEl.classList.toggle("summary-expanded", shouldExpandSummary);
+  const hasOpenIssues = actionCount > 0;
+  const shouldExpandSummary = mode === "Replay" || hasActiveRuns || hasOpenIssues;
 
   const shouldPulseSimulationCta = mode === "Live" && !shouldExpandSummary && !state.ui.reducedMotion;
   summaryRunSimBtnEl.classList.toggle("pulse", shouldPulseSimulationCta);
@@ -2269,7 +2319,6 @@ function renderNeedsAttentionQueue(runs) {
         <button type="button" data-action="restart" data-run-id="${run.runId}">Restart</button>
         <button type="button" data-action="failure" data-run-id="${run.runId}">View failure</button>
         <button type="button" data-action="input" data-run-id="${run.runId}">Provide input</button>
-        <button type="button" data-action="open" data-run-id="${run.runId}">Open agent</button>
       </div>
     `;
 
@@ -3165,9 +3214,6 @@ function setupEventHandlers() {
       const text = window.prompt("Provide operator input:", "");
       if (text) provideInput(runId, text);
       return;
-    }
-    if (action === "open") {
-      selectRun(runId, { drawerMode: "overview", openDrawer: true });
     }
   });
 

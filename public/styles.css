@@ -559,15 +559,15 @@ body.layout-compact-height .approval-street-overlay {
   overflow-x: auto;
 }
 
-.approval-toggle {
+.approval-sign {
   flex: 0 0 auto;
   min-width: 260px;
   border: 3px solid transparent;
   border-radius: 999px;
   padding: 8px 18px;
   background:
-    linear-gradient(180deg, #ffffff, #eef2f6) padding-box,
-    linear-gradient(180deg, #26bb70, #0d8f4c 54%, #07763e) border-box;
+    linear-gradient(180deg, #17a55b, #10914d 54%, #0a7d42) padding-box,
+    linear-gradient(180deg, #ffffff, #e9f1f7) border-box;
   color: #f8fffc;
   text-shadow: 0 1px 0 rgba(11, 51, 31, 0.45);
   text-transform: none;
@@ -576,6 +576,8 @@ body.layout-compact-height .approval-street-overlay {
   font-size: 22px;
   font-weight: 800;
   line-height: 1.05;
+  pointer-events: none;
+  user-select: none;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.5) inset,
     0 4px 14px rgba(8, 58, 33, 0.34);
@@ -611,10 +613,6 @@ body.layout-compact-height .approval-street-overlay {
 
 .approval-street-overlay button {
   border-color: rgba(151, 206, 240, 0.4);
-}
-
-.approval-street-overlay .approval-toggle {
-  border-color: transparent;
 }
 
 button,
@@ -1090,7 +1088,7 @@ body.reduced-motion * {
 }
 
 @media (max-height: 820px) {
-  .approval-toggle {
+  .approval-sign {
     min-width: 214px;
     font-size: 18px;
     padding: 7px 14px;
@@ -1167,7 +1165,7 @@ body.reduced-motion * {
     bottom: 8px;
   }
 
-  .approval-toggle {
+  .approval-sign {
     min-width: 214px;
     font-size: 18px;
     padding: 7px 14px;

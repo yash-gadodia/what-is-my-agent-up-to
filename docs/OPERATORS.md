@@ -122,6 +122,7 @@ To keep 15-20+ agents readable:
 
 - Approval Street is rendered as a dedicated road-themed overlay lane at the bottom of the map viewport.
 - On compact-height screens, Approval Street automatically moves below the map viewport to preserve actor visibility and control readability at 100% zoom.
-- The lane appears immediately when at least one run requires approval.
+- The lane appears immediately and stays expanded when at least one run requires approval.
 - The lane auto-hides entirely when approvals return to `0 pending`.
+- The `Lorong Approval` title is a non-interactive visual sign (not a clickable toggle).
 - Approval actions (`Approve next`, `Batch approve`, single-item approve) remain available in this lane mode.

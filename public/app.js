@@ -139,7 +139,6 @@ const demoScriptBannerEl = document.getElementById("demoScriptBanner");
 const demoScriptTextEl = document.getElementById("demoScriptText");
 
 const approvalStreetEl = document.getElementById("approvalStreet");
-const approvalStreetToggleEl = document.getElementById("approvalStreetToggle");
 const approvalStreetBodyEl = document.getElementById("approvalStreetBody");
 const approvalCountEl = document.getElementById("approvalCount");
 const approveNextBtnEl = document.getElementById("approveNextBtn");
@@ -221,8 +220,6 @@ const state = {
     drawerMode: "overview",
     opsDrawerOpen: false,
     agentDrawerOpen: false,
-    approvalStreetExpanded: false,
-    approvalStreetManual: false,
     approvalOverlayVisible: false,
     approvalOverlayRects: [],
     opsDevtoolsExpanded: false,
@@ -387,23 +384,16 @@ function setAgentDrawerOpen(open) {
   agentDrawerBackdropEl.hidden = !state.ui.agentDrawerOpen;
 }
 
-function setApprovalStreetExpanded(expanded, options = {}) {
-  const manual = Boolean(options.manual);
-  state.ui.approvalStreetExpanded = Boolean(expanded);
-  if (manual) {
-    state.ui.approvalStreetManual = state.ui.approvalStreetExpanded;
-  } else if (!state.ui.approvalStreetExpanded) {
-    state.ui.approvalStreetManual = false;
-  }
-  approvalStreetEl.hidden = !state.ui.approvalOverlayVisible;
-  approvalStreetEl.classList.toggle("expanded", state.ui.approvalStreetExpanded);
-  approvalStreetEl.classList.toggle("collapsed", !state.ui.approvalStreetExpanded);
-  approvalStreetBodyEl.hidden = !state.ui.approvalStreetExpanded;
+function setApprovalStreetExpanded(expanded) {
+  setApprovalOverlayVisible(expanded);
 }
 
 function setApprovalOverlayVisible(visible) {
   state.ui.approvalOverlayVisible = Boolean(visible);
   approvalStreetEl.hidden = !state.ui.approvalOverlayVisible;
+  approvalStreetBodyEl.hidden = !state.ui.approvalOverlayVisible;
+  approvalStreetEl.classList.toggle("expanded", state.ui.approvalOverlayVisible);
+  approvalStreetEl.classList.toggle("collapsed", !state.ui.approvalOverlayVisible);
   approvalStreetEl.classList.toggle("is-visible", state.ui.approvalOverlayVisible);
 }
 
@@ -2246,13 +2236,10 @@ function renderAgentTable(runs) {
 
 function renderApprovalStreet(runs) {
   const approvals = runs.filter((run) => run.requiresHumanGate).sort(queueSort);
-  setApprovalOverlayVisible(approvals.length > 0);
+  const hasApprovals = approvals.length > 0;
+  setApprovalOverlayVisible(hasApprovals);
   approvalCountEl.textContent = `${approvals.length} pending`;
-  if (approvals.length > 0) setApprovalStreetExpanded(true);
-  if (approvals.length === 0 && state.ui.approvalStreetExpanded && !state.ui.approvalStreetManual) {
-    setApprovalStreetExpanded(false);
-  }
-  let signature = `${approvals.length}|${state.ui.approvalStreetExpanded ? 1 : 0}|${state.ui.approvalStreetManual ? 1 : 0}`;
+  let signature = `${approvals.length}`;
   for (const run of approvals) {
     signature += `|${run.runId}:${run.label}:${run.approvalRisk}:${run.approvalSummary || ""}`;
   }
@@ -2895,7 +2882,7 @@ function runSwimlaneDemo() {
         ts: now + 3,
         message: "Blocked waiting for flaky integration dependency. Awaiting user approval to retry.",
       });
-      setApprovalStreetExpanded(true, { manual: false });
+      setApprovalStreetExpanded(true);
     }
 
     if (
@@ -2912,7 +2899,7 @@ function runSwimlaneDemo() {
         ts: now + 3,
         message: "Awaiting user approval before applying risky change.",
       });
-      setApprovalStreetExpanded(true, { manual: false });
+      setApprovalStreetExpanded(true);
     }
 
     if (!needsManualIntervention) {
@@ -2993,7 +2980,11 @@ function setupEventHandlers() {
   });
 
   summaryApprovalsEl.addEventListener("click", () => {
-    setApprovalStreetExpanded(true, { manual: true });
+    if (state.ui.approvalOverlayVisible) {
+      approvalStreetEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else {
+      setOpsDrawerOpen(true);
+    }
   });
 
   summaryFirstAnomalyEl.addEventListener("click", () => {
@@ -3011,10 +3002,6 @@ function setupEventHandlers() {
 
   viewCityBtnEl.addEventListener("click", () => setViewMode("city"));
   viewPaneBtnEl.addEventListener("click", () => setViewMode("pane"));
-
-  approvalStreetToggleEl.addEventListener("click", () => {
-    setApprovalStreetExpanded(!state.ui.approvalStreetExpanded, { manual: true });
-  });
 
   newRunBtnEl.addEventListener("click", () => {
     state.manualRunCounter += 1;

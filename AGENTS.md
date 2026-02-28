@@ -50,3 +50,10 @@ Required deliverables:
 - Works in fallback mode (simulator/replay).
 - Does not reduce dashboard clarity.
 - Demo script still fits within 2 minutes.
+
+## Required Delivery Behavior
+
+- Always relate implementation decisions back to the 5 judging criteria.
+- Prefer work that improves demo certainty before work that expands scope.
+- Keep documentation synchronized with runtime behavior after every major change.
+- Treat broken live ingestion as priority-zero during hackathon window.

@@ -53,6 +53,23 @@ This gives a lightweight eval lens without requiring runtime-specific integratio
 
 `relay.mjs` drives `codex app-server` (initialize -> thread/start -> turn/start), forwards notifications to `ws://localhost:8787`, and the frontend maps those events into stable operational signals.
 
+## Criteria To Feature Mapping
+
+1. Clarity of idea
+- Story panel + caption bar explain current state in plain language.
+
+2. Technical execution
+- `relay.mjs` app-server integration + live WS stream + inspector raw payload.
+
+3. Completeness
+- Run lanes, timeline, scorecard, replay, simulator, optional git-diff helper.
+
+4. Impact and insight
+- Stuck score, intervention suggestion, and district-level activity narrative.
+
+5. Use of Codex
+- Live app-server notifications displayed and inspectable during demo.
+
 ## Two Minute Demo Flow
 
 1. Start `npm run dev` and open `http://localhost:8788`.
@@ -70,3 +87,9 @@ This gives a lightweight eval lens without requiring runtime-specific integratio
 - No OpenClaw runtime process integration in this build
 - Input source is Codex app-server notifications relayed to `ws://localhost:8787`
 - Mapping is resilient to unknown event types
+
+## Pre-Submission Gate
+
+1. Public repo link works without authentication.
+2. Video length is <=2 minutes and includes live Codex run evidence.
+3. Optional demo link, if provided, is reachable.

@@ -1,51 +1,51 @@
 # What Is My Agent Up To? (WIMUT)
 
-Canvas dashboard for live Codex app-server events.
+WIMUT is a live observability dashboard for Codex agent runs.
+It turns raw runtime activity into a visual, operator-friendly control tower so teams can quickly understand what the agent is doing, where effort is going, and when intervention is needed.
 
-It listens to `ws://localhost:8787`, maps Codex app-server notifications into stable visual signals, and renders a Singapore-themed pixel city that shows activity, file touch points, failures, success, and stuck loops.
+## Hackathon Context
+
+In live coding-agent sessions, logs are noisy and hard to interpret under time pressure.
+This project is built for hackathon judges and operators who need fast answers, not deep protocol reading.
+
+WIMUT focuses on one core question:
+
+- What is my agent up to right now?
 
 ## Problem
 
-Agent coding sessions are hard to observe live. Teams can see logs, but cannot quickly answer:
+Agent coding sessions are hard to observe live. Teams can usually see output, but still cannot quickly answer:
 
 - what the agent is doing now
-- where effort is going
-- whether progress is real or stuck in a loop
+- whether progress is real or just repetitive tool loops
+- where changes are happening
+- when to intervene
+
+## Why This Matters
+
+- Trust: makes agent behavior visible instead of opaque
+- Speed: reduces time to understand current run state
+- Control: enables timely intervention when stuck patterns appear
+- Communication: gives technical and non-technical stakeholders a shared view
 
 ## Solution
 
-WIMUT turns Codex runtime signals into a visual control tower:
+WIMUT combines:
 
-- app-server notifications streamed in real time
-- stable derived signals (`tool`, `file change`, `error`, `success`, `step`)
-- map + timeline + scorecard + replay for fast operator decisions
+- live Codex app-server notifications
+- stable derived event mapping (`step`, `tool.activity`, `file.changed`, `error`, `success`)
+- run lanes, timeline, scorecard, stuck detection, and replay
+- a Singapore-themed pixel city metaphor that makes activity legible in seconds
 
-## Hackathon Judging Criteria
+## What We Built
 
-Use this rubric as the delivery target for every demo, feature, and narrative:
-
-1. Clarity of idea
-2. Technical execution
-3. Completeness
-4. Impact and insight
-5. Use of Codex
-
-## Submission Requirements
-
-Submissions close at **6:00 PM local time**.
-
-Required:
-
-1. Public GitHub repository
-2. 2 minute video
-3. Optional demo link
-
-## What This Is
-
-- Real-time visualiser for Codex app-server notifications
-- Multi-run lanes with agent status: idle, working, error, done
-- Replay, scrub, import, and export for demos
-- Simulator pack for guaranteed stage flow
+- Real-time dashboard for Codex app-server runs
+- Multi-run lanes with status (`idle`, `working`, `error`, `done`)
+- Event inspector (raw payload + derived meaning)
+- Stuck scoring and suggested intervention text
+- Replay/import/export for deterministic demos
+- Simulator pack (`scolded`, `longtask`, `asleep`) for reliability
+- Optional git-diff helper for ground-truth changed files
 
 ## Architecture (Current)
 
@@ -54,7 +54,23 @@ Required:
 3. Relay forwards app-server notifications to browser websocket clients at `ws://localhost:8787`.
 4. `public/mapping.js` converts raw notifications to stable derived events.
 5. `public/app.js` updates run state, scorecard, stuck detection, timeline, and canvas visuals.
-6. Optional `helper.mjs` adds git-diff ground truth for changed files.
+6. Optional `helper.mjs` provides git-diff signals to strengthen file-change truth.
+
+## Build and Runtime Components
+
+- `server.mjs`: static web server for the UI on `http://localhost:8788`
+- `relay.mjs`: Codex app-server harness and websocket broadcaster on `ws://localhost:8787`
+- `helper.mjs`: optional git diff API on `http://localhost:8790`
+- `public/mapping.js`: event normalization and derived signal mapping
+- `public/app.js`: runtime state machine, rendering, replay, and UX logic
+
+## Event Flow (Harness)
+
+1. Codex app-server emits protocol notifications.
+2. Relay forwards notifications plus lifecycle events (`relay.started`, `appserver.connected`, `appserver.error`, `codex.exit`).
+3. Frontend ingests raw events and derives stable semantic events.
+4. Derived events drive UI state, animation, metrics, and interventions.
+5. Optional helper adds repository diff-based file-change events.
 
 ## How To Run
 
@@ -79,7 +95,7 @@ Optional relay internals:
 node relay.mjs --repo /abs/path --prompt "..." --port 8787 --app-server-port 8791
 ```
 
-Optional git diff helper (for ground truth changed files):
+Optional git diff helper:
 
 ```bash
 npm run helper
@@ -91,35 +107,53 @@ Then in the UI:
 2. Enable `Use git diff`
 3. Click `Set Repo`
 
-## Demo Script For Judges
+## Hackathon Judging Criteria
 
-1. Start UI with `npm run dev`.
-2. Start relay with a coding prompt in a target repo.
-3. Show live websocket status and runs list.
-4. Explain city mapping:
-   - `CBD` for general files
-   - `Bugis` for frontend paths
-   - `Jurong` for infra paths
-   - `Changi` for tests
-5. Trigger activity and narrate:
-   - tool activity spawns vehicles from Merlion HQ
-   - file changes upgrade district buildings
-   - errors trigger red beacon and smoke
-   - success triggers fireworks near Marina Bay
-6. Show right panel scorecard and stuck score interventions.
-7. Open timeline item and inspect raw JSON plus derived meaning.
-8. Switch to replay, scrub slider, and speed up at `2x` or `5x`.
-9. Run `Simulator Pack` for `scolded`, `longtask`, `asleep` flows.
+This project is explicitly optimized for:
 
-## Simulator Mode
+1. Clarity of idea
+2. Technical execution
+3. Completeness
+4. Impact and insight
+5. Use of Codex
 
-Built-in buttons generate plausible Codex-like events for:
+## Judging Coverage Checklist
 
-- `scolded`
-- `longtask`
-- `asleep`
+- Clarity of idea: story panel and captions explain current status quickly.
+- Technical execution: live Codex app-server run is visible in map and timeline.
+- Completeness: live mode, inspector, scorecard, replay, simulator all work.
+- Impact and insight: stuck score and intervention guidance are demonstrated.
+- Use of Codex: raw inspector shows Codex-driven notifications in real time.
 
-This is useful when websocket data is unavailable or for a fixed-time stage demo.
+## Demo Script (2 Minutes)
+
+1. Start UI and relay.
+2. State one-line value prop: "We make agent runs observable and intervenable."
+3. Show live websocket status and run lanes.
+4. Trigger activity and explain district mapping (CBD/Bugis/Jurong/Changi).
+5. Open a timeline item and show raw event plus derived meaning.
+6. Show scorecard + stuck intervention suggestion.
+7. Switch to replay and scrub quickly.
+8. Trigger simulator pack to show deterministic fallback reliability.
+
+## Submission Requirements
+
+Submissions close at **6:00 PM local time**.
+
+Required:
+
+1. Public GitHub repository
+2. 2 minute video
+3. Optional demo link
+
+## Pre-Submission QA
+
+1. Confirm repository is public.
+2. Confirm README reflects current architecture and demo flow.
+3. Record and verify a <=2 minute video.
+4. Include at least one visible live Codex app-server run in the video.
+5. Verify replay and simulator fallback paths.
+6. Add optional demo link if hosting is available.
 
 ## Troubleshooting
 
@@ -130,28 +164,28 @@ This is useful when websocket data is unavailable or for a fixed-time stage demo
 - Relay exits immediately with app-server error
   - confirm Codex CLI supports `codex app-server`
   - check relay output for `appserver.error`
-  - this relay intentionally fails fast and does not fallback to `exec --json`
+  - relay is intentionally fail-fast (no automatic fallback to `exec --json`)
 - App-server starts but no visible progress
   - verify prompt is passed in relay command
-  - inspect timeline raw event payloads in UI inspector
-  - run simulator pack to validate rendering path
+  - inspect timeline raw payloads in the inspector
+  - run simulator pack to validate render path
 - Events arrive but city does not react
   - inspect timeline and raw JSON in inspector
-  - mapping is heuristic and can be tuned in `/public/mapping.js`
+  - tune mapping logic in `/public/mapping.js`
 - Missing file paths in visuals
-  - event may not contain a path and regex may not match
-  - enable helper and `Use git diff` for repository ground truth
+  - enable helper and `Use git diff` for ground truth
 - Helper offline
   - start `npm run helper`
   - confirm port `8790` is free
 
-## Files
+## Repo File Map
 
 - `/relay.mjs` Codex app-server relay (JSON-RPC client) to websocket
 - `/server.mjs` static server for `/public` on `8788`
 - `/helper.mjs` optional git diff helper on `8790`
-- `/public/mapping.js` raw Codex event/notification to derived visual events
+- `/public/mapping.js` raw event/notification to derived visual events
 - `/public/app.js` runtime, city rendering, lanes, replay, simulator
-- `/docs/HACKATHON.md` judge framing and eval angle
-- `/docs/SOUL.md` design principles and theme guidance
-- `/docs/OPENAI.md` Codex app-server integration strategy
+- `/docs/HACKATHON.md` judging framing and demo strategy
+- `/docs/SOUL.md` design and product principles
+- `/docs/OPENAI.md` Codex app-server integration notes
+- `/AGENTS.md` repo-level execution instructions

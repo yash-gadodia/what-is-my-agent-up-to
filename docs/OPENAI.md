@@ -6,6 +6,16 @@ The product goal is operational clarity for live agent runs: quickly explain wha
 
 The integration goal is to keep the visual pipeline stable while Codex runtime event schemas evolve.
 
+## Judging Relevance
+
+This integration must directly support hackathon scoring:
+
+1. Clarity of idea: derived event contract keeps UI language stable and understandable.
+2. Technical execution: live app-server protocol integration is visible and testable.
+3. Completeness: single pipeline powers live, replay, and inspector views.
+4. Impact and insight: mapping enables stuck detection and intervention copy.
+5. Use of Codex: runtime source is Codex app-server, not simulator-only events.
+
 ## Current Input Contract
 
 This project consumes Codex app-server notifications streamed over websocket:

@@ -68,8 +68,14 @@ test("parseAppServerPayload rejects batch payloads with non-object entries", () 
 });
 
 test("classifyJsonRpcMessage detects response/request/notification/unknown", () => {
-  assert.equal(classifyJsonRpcMessage({ id: 1, result: {} }), "response");
-  assert.equal(classifyJsonRpcMessage({ id: 2, method: "turn/start" }), "request");
-  assert.equal(classifyJsonRpcMessage({ method: "turn/completed" }), "notification");
+  assert.equal(classifyJsonRpcMessage({ jsonrpc: "2.0", id: 1, result: {} }), "response");
+  assert.equal(classifyJsonRpcMessage({ jsonrpc: "2.0", id: 2, method: "turn/start" }), "request");
+  assert.equal(classifyJsonRpcMessage({ jsonrpc: "2.0", method: "turn/completed" }), "notification");
   assert.equal(classifyJsonRpcMessage({ jsonrpc: "2.0" }), "unknown");
+});
+
+test("classifyJsonRpcMessage requires jsonrpc 2.0", () => {
+  assert.equal(classifyJsonRpcMessage({ id: 1, result: {} }), "unknown");
+  assert.equal(classifyJsonRpcMessage({ jsonrpc: "1.0", id: 1, result: {} }), "unknown");
+  assert.equal(classifyJsonRpcMessage({ jsonrpc: "2.0", id: 1, result: {}, error: {} }), "unknown");
 });

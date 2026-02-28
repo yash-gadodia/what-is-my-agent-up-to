@@ -72,6 +72,7 @@ export function parseAppServerPayload(raw) {
 
 export function classifyJsonRpcMessage(message) {
   if (!isObject(message)) return "unknown";
+  if (message.jsonrpc !== "2.0") return "unknown";
 
   const hasId = Object.prototype.hasOwnProperty.call(message, "id");
   const hasMethod = typeof message.method === "string" && message.method.length > 0;

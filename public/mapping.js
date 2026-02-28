@@ -409,22 +409,33 @@ function applyCombinedTextRules(context) {
   }
 }
 
-export function mapCodexToVizEvents(rawEvent) {
+function createMappingContext(rawEvent) {
   const ts = getRawEventTimestamp(rawEvent);
   const rawType = getRawEventType(rawEvent);
   const rawTypeLower = toLowerText(rawType);
   const method = toLowerText(rawEvent?.method || "");
   const isSwarmEvent = Boolean(rawEvent?.swarm && typeof rawEvent.swarm === "object");
-  if (isSwarmEvent && isSwarmNoisyMethod(method)) {
-    return [];
-  }
   const blob = safeStringify(rawEvent);
-  const blobLower = blob.toLowerCase();
-  const combinedLower = `${rawTypeLower} ${method} ${blobLower}`;
+  const combinedLower = `${rawTypeLower} ${method} ${blob.toLowerCase()}`;
   const message = extractMessage(rawEvent);
   const toolName = extractToolName(rawEvent, combinedLower);
   const filePaths = extractFilePaths(rawEvent);
+  return {
+    rawEvent,
+    ts,
+    rawType,
+    rawTypeLower,
+    method,
+    isSwarmEvent,
+    combinedLower,
+    message,
+    toolName,
+    filePaths,
+  };
+}
 
+function deriveEvents(context) {
+  const { method, rawEvent, rawType, rawTypeLower, combinedLower, message, toolName, filePaths, ts } = context;
   const derived = [];
   const base = {
     ts,
@@ -467,4 +478,12 @@ export function mapCodexToVizEvents(rawEvent) {
   }
 
   return dedupeDerived(derived);
+}
+
+export function mapCodexToVizEvents(rawEvent) {
+  const context = createMappingContext(rawEvent);
+  if (context.isSwarmEvent && isSwarmNoisyMethod(context.method)) {
+    return [];
+  }
+  return deriveEvents(context);
 }

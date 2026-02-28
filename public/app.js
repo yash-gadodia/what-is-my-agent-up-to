@@ -554,6 +554,27 @@ function updateAnnouncementFromRawEvent(rawEvent) {
   return true;
 }
 
+function updateAnnouncementFromDerived(derivedEvents, run) {
+  if (!Array.isArray(derivedEvents) || derivedEvents.length === 0) return false;
+  const priority = ["human.gate", "stall", "error", "tool.activity", "step.started", "success", "step.ended", "file.changed"];
+  let chosen = null;
+  for (const kind of priority) {
+    chosen = derivedEvents.find((item) => item?.kind === kind);
+    if (chosen) break;
+  }
+  if (!chosen) chosen = derivedEvents[0];
+  const message = compactText(chosen?.message || chosen?.rawType || "");
+  if (!message) return false;
+
+  const runLabel = run?.label ? run.label.replace(/^codex:/, "") : "agent";
+  const text = `${runLabel}: ${message}`.slice(0, 220);
+  if (state.ui.latestCommandText === text && state.ui.latestCommandSource === "Live event") return false;
+  state.ui.latestCommandText = text;
+  state.ui.latestCommandSource = "Live event";
+  state.ui.latestCommandTs = chosen?.ts || nowMs();
+  return true;
+}
+
 function applyViewModeToDom() {
   const mode = state.ui.viewMode === "pane" ? "pane" : "city";
   document.body.classList.toggle("view-city", mode === "city");
@@ -963,6 +984,7 @@ function ingestRawEvent(rawEvent, options = {}) {
   }
   const run = pickRunForRawEvent(rawEvent, options.forceRunId || null);
   integrateDerivedSet(run, rawEvent, derivedEvents, { skipPersistence: options.skipPersistence === true });
+  updateAnnouncementFromDerived(derivedEvents, run);
   if (!state.selectedRunId) state.selectedRunId = run.runId;
   updateAllDerived();
   renderUi();
